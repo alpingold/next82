@@ -1,0 +1,221 @@
+"""Build the modeling table: one row per player-season, target = games played next season.
+
+Games are measured as a share of the team's schedule (gp_share) so that the
+shortened 2019-20 and 2020-21 seasons are comparable to 82-game seasons.
+
+Absence features come from matching each player's game log against their
+team's schedule, split into stints (consecutive games with one team):
+    gap_*      games missed between two appearances with the same team
+    missed_start / missed_end
+               team games before a player's first appearance / after their last.
+               These also capture late signings, releases and buyouts, so they
+               are kept separate from mid-stint gaps.
+
+Target rules for a player in season s:
+    played in s+1                       -> target = s+1 gp_share
+    absent in s+1, returns in any later -> target = 0 (missed the whole season)
+    never seen again after s            -> dropped (left the league; can't tell why)
+The last season has no target; those rows are what the app forecasts.
+
+Usage:
+    python -m next82.features
+"""
+import pandas as pd
+
+from next82 import config
+from next82.data import load
+
+OUTPUT_PATH = config.PROCESSED_DIR / "player_seasons.parquet"
+
+# A run of this many missed games counts as a major absence.
+MAJOR_ABSENCE_GAMES = 10
+
+FEATURES = [
+    "age",
+    "years_since_draft",
+    "undrafted",
+    "height_in",
+    "weight_lb",
+    "gp_share",
+    "mpg",
+    "min_share",
+    "usg_pct",
+    "longest_gap",
+    "n_major_gaps",
+    "missed_start",
+    "missed_end",
+    "n_teams",
+    "gp_share_lag1",
+    "gp_share_lag2",
+    "missed_season_lag1",
+    "mpg_lag1",
+    "longest_gap_lag1",
+    "missed_end_lag1",
+    "major_gaps_3yr",
+    "avg_gp_share_3yr",
+    "seasons_in_data",
+]
+TARGET = "gp_share_next"
+
+
+def _season_start(season: str) -> int:
+    return int(season[:4])
+
+
+def team_schedules(team_games: pd.DataFrame) -> pd.DataFrame:
+    """Number each team's games 0..n-1 in date order."""
+    tg = team_games[["SEASON", "TEAM_ID", "GAME_ID", "GAME_DATE"]].sort_values(
+        ["SEASON", "TEAM_ID", "GAME_DATE", "GAME_ID"]
+    )
+    tg["game_idx"] = tg.groupby(["SEASON", "TEAM_ID"]).cumcount()
+    tg["team_n_games"] = tg.groupby(["SEASON", "TEAM_ID"]).GAME_ID.transform("size")
+    return tg
+
+
+def absence_features(player_games: pd.DataFrame, schedules: pd.DataFrame) -> pd.DataFrame:
+    """Per player-season absence stats from game logs matched to team schedules."""
+    pg = player_games[["SEASON", "PLAYER_ID", "TEAM_ID", "GAME_ID"]].merge(
+        schedules, on=["SEASON", "TEAM_ID", "GAME_ID"], how="inner"
+    )
+    pg = pg.sort_values(["SEASON", "PLAYER_ID", "GAME_DATE", "GAME_ID"])
+
+    # A new stint starts whenever the player's team changes.
+    new_stint = pg.groupby(["SEASON", "PLAYER_ID"]).TEAM_ID.transform(lambda t: t != t.shift())
+    pg["stint"] = new_stint.groupby([pg.SEASON, pg.PLAYER_ID]).cumsum()
+
+    # Games missed since the previous appearance in the same stint.
+    prev_idx = pg.groupby(["SEASON", "PLAYER_ID", "stint"]).game_idx.shift()
+    pg["gap"] = (pg.game_idx - prev_idx - 1).fillna(0)
+
+    stints = pg.groupby(["SEASON", "PLAYER_ID", "stint"]).agg(
+        first_idx=("game_idx", "min"),
+        last_idx=("game_idx", "max"),
+        team_n_games=("team_n_games", "first"),
+    )
+    stints = stints.reset_index()
+    first = stints.groupby(["SEASON", "PLAYER_ID"]).first()
+    last = stints.groupby(["SEASON", "PLAYER_ID"]).last()
+
+    gaps = pg.groupby(["SEASON", "PLAYER_ID"]).gap
+    out = pd.DataFrame({
+        "longest_gap": gaps.max(),
+        "n_major_gaps": gaps.apply(lambda g: (g >= MAJOR_ABSENCE_GAMES).sum()),
+        "missed_start": first.first_idx,
+        "missed_end": last.team_n_games - 1 - last.last_idx,
+        "n_teams": stints.groupby(["SEASON", "PLAYER_ID"]).size(),
+    })
+    # A season-ending absence is also a major absence.
+    out["n_major_gaps"] += (out.missed_end >= MAJOR_ABSENCE_GAMES).astype(int)
+    return out.reset_index()
+
+
+def season_table() -> pd.DataFrame:
+    """One row per player-season with that season's stats and absence features."""
+    stats = load("player_stats")
+    bio = load("player_bio")
+    team_games = load("team_games")
+    schedules = team_schedules(team_games)
+
+    # Length of the season = most games any team played (2019-20 varied by team).
+    season_games = schedules.groupby("SEASON").team_n_games.max().rename("season_games")
+    league_min = stats.groupby("SEASON").MIN.max().rename("max_min")
+
+    df = stats[["SEASON", "PLAYER_ID", "PLAYER_NAME", "TEAM_ABBREVIATION", "AGE", "GP", "MIN"]]
+    df = df.merge(season_games, on="SEASON").merge(league_min, on="SEASON")
+
+    bio = bio[["SEASON", "PLAYER_ID", "PLAYER_HEIGHT_INCHES", "PLAYER_WEIGHT", "DRAFT_YEAR", "USG_PCT"]]
+    df = df.merge(bio, on=["SEASON", "PLAYER_ID"], how="left")
+    df = df.merge(absence_features(load("player_games"), schedules), on=["SEASON", "PLAYER_ID"], how="left")
+
+    draft_year = pd.to_numeric(df.DRAFT_YEAR, errors="coerce")
+    df = df.assign(
+        season_idx=df.SEASON.map({s: i for i, s in enumerate(config.SEASONS)}),
+        age=df.AGE,
+        years_since_draft=df.SEASON.map(_season_start) - draft_year,
+        undrafted=draft_year.isna().astype(int),
+        height_in=pd.to_numeric(df.PLAYER_HEIGHT_INCHES, errors="coerce"),
+        weight_lb=pd.to_numeric(df.PLAYER_WEIGHT, errors="coerce"),
+        gp_share=df.GP / df.season_games,
+        mpg=df.MIN / df.GP,
+        min_share=df.MIN / df.max_min,
+        usg_pct=df.USG_PCT,
+    )
+    return df
+
+
+def add_history(df: pd.DataFrame) -> pd.DataFrame:
+    """Lagged features from earlier seasons, matched by season (not by row)."""
+    cols = ["PLAYER_ID", "season_idx", "gp_share", "mpg", "longest_gap", "missed_end"]
+    for lag in (1, 2):
+        prev = df[cols].copy()
+        prev["season_idx"] += lag
+        prev = prev.rename(columns={c: f"{c}_lag{lag}" for c in cols[2:]})
+        df = df.merge(prev, on=["PLAYER_ID", "season_idx"], how="left")
+
+    # A season between a player's first appearance and now with no record means
+    # they missed the whole season: 0 games played, and it counts as a major absence.
+    first_seen = df.groupby("PLAYER_ID").season_idx.transform("min")
+    for lag in (1, 2):
+        sat_out = df[f"gp_share_lag{lag}"].isna() & (df.season_idx - lag >= first_seen)
+        df.loc[sat_out, f"gp_share_lag{lag}"] = 0.0
+    df["missed_season_lag1"] = (df.season_idx - 1 >= first_seen) & df.gp_share_lag1.eq(0)
+    df["missed_season_lag1"] = df.missed_season_lag1.astype(int)
+
+    # 3-season windows include the current season; missed seasons are filled in.
+    by_player = df.sort_values("season_idx").groupby("PLAYER_ID")
+    window = lambda col, fn, fill: by_player.apply(
+        lambda g: g.set_index("season_idx")[col]
+        .reindex(range(g.season_idx.min(), g.season_idx.max() + 1), fill_value=fill)
+        .rolling(3, min_periods=1).agg(fn)
+        .reindex(g.season_idx).set_axis(g.index),
+        include_groups=False,
+    ).droplevel(0)
+    df["major_gaps_3yr"] = window("n_major_gaps", "sum", fill=1)
+    df["avg_gp_share_3yr"] = window("gp_share", "mean", fill=0.0)
+    df["seasons_in_data"] = by_player.cumcount() + 1
+    return df
+
+
+def add_target(df: pd.DataFrame) -> pd.DataFrame:
+    """Next season's gp_share, with the rules described in the module docstring."""
+    nxt = df[["PLAYER_ID", "season_idx", "gp_share", "GP", "season_games"]].copy()
+    nxt["season_idx"] -= 1
+    nxt = nxt.rename(columns={"gp_share": TARGET, "GP": "gp_next", "season_games": "season_games_next"})
+    df = df.merge(nxt, on=["PLAYER_ID", "season_idx"], how="left")
+
+    last_seen = df.groupby("PLAYER_ID").season_idx.transform("max")
+    missed_full = df[TARGET].isna() & (last_seen > df.season_idx + 1)
+    df.loc[missed_full, [TARGET, "gp_next"]] = 0.0
+
+    last_idx = len(config.SEASONS) - 1
+    df["is_forecast"] = df.season_idx == last_idx
+    # Players absent next season and never seen again: can't tell why, so drop.
+    keep = df.is_forecast | df[TARGET].notna()
+    return df[keep].reset_index(drop=True)
+
+
+def build() -> pd.DataFrame:
+    df = add_target(add_history(season_table()))
+    id_cols = ["SEASON", "season_idx", "PLAYER_ID", "PLAYER_NAME", "TEAM_ABBREVIATION", "GP", "season_games"]
+    target_cols = [TARGET, "gp_next", "season_games_next", "is_forecast"]
+    return df[id_cols + FEATURES + target_cols].sort_values(["season_idx", "PLAYER_ID"]).reset_index(drop=True)
+
+
+def load_table() -> pd.DataFrame:
+    if not OUTPUT_PATH.exists():
+        raise FileNotFoundError("Run `python -m next82.features` first.")
+    return pd.read_parquet(OUTPUT_PATH)
+
+
+def main():
+    df = build()
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(OUTPUT_PATH, index=False)
+    n_train = (~df.is_forecast).sum()
+    print(f"Saved {len(df):,} rows to {OUTPUT_PATH.relative_to(config.ROOT)}")
+    print(f"  with target: {n_train:,}  |  forecast rows ({config.SEASONS[-1]}): {df.is_forecast.sum():,}")
+    print(f"  missed full next season (target=0): {(df.gp_next == 0).sum()}")
+
+
+if __name__ == "__main__":
+    main()
