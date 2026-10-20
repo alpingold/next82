@@ -4,7 +4,7 @@ All models predict next season's gp_share and are clipped to [0, 1].
 """
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.pipeline import make_pipeline
@@ -50,7 +50,7 @@ def lightgbm():
         objective="l1",
         n_estimators=300,
         learning_rate=0.02,
-        num_leaves=7,
+        num_leaves=15,
         min_child_samples=80,
         subsample=0.8,
         subsample_freq=1,
@@ -69,9 +69,42 @@ MODELS = {
 }
 
 
-def fit(name: str, df: pd.DataFrame):
-    return MODELS[name]().fit(df[FEATURES], df[TARGET])
+def setback_classifier():
+    return LGBMClassifier(
+        n_estimators=300,
+        learning_rate=0.02,
+        num_leaves=15,
+        min_child_samples=80,
+        subsample=0.8,
+        subsample_freq=1,
+        colsample_bytree=0.8,
+        random_state=config.RANDOM_STATE,
+        verbose=-1,
+    )
 
 
-def predict(model, df: pd.DataFrame) -> np.ndarray:
-    return np.clip(model.predict(df[FEATURES]), 0, 1)
+def is_setback(df: pd.DataFrame) -> pd.Series:
+    return df[TARGET] < config.SETBACK_GAMES / 82
+
+
+def fit_setback(df: pd.DataFrame):
+    """Chance of a setback season (fewer than SETBACK_GAMES of 82)."""
+    return setback_classifier().fit(df[FEATURES], is_setback(df))
+
+
+def fit_healthy(df: pd.DataFrame):
+    """Games played next season, trained only on seasons without a setback."""
+    healthy = df[~is_setback(df)]
+    return lightgbm().fit(healthy[FEATURES], healthy[TARGET])
+
+
+def predict_setback(model, df: pd.DataFrame) -> np.ndarray:
+    return model.predict_proba(df[FEATURES])[:, 1]
+
+
+def fit(name: str, df: pd.DataFrame, features: list[str] = FEATURES):
+    return MODELS[name]().fit(df[features], df[TARGET])
+
+
+def predict(model, df: pd.DataFrame, features: list[str] = FEATURES) -> np.ndarray:
+    return np.clip(model.predict(df[features]), 0, 1)

@@ -38,7 +38,7 @@ OUTPUT_PATH = config.PROCESSED_DIR / "player_seasons.parquet"
 # A run of this many missed games counts as a major absence.
 MAJOR_ABSENCE_GAMES = 10
 
-FEATURES = [
+BASE_FEATURES = [
     "age",
     "years_since_draft",
     "undrafted",
@@ -64,6 +64,16 @@ FEATURES = [
     "avg_gp_share_3yr",
     "seasons_in_data",
 ]
+
+# Inputs for players coming back from a missed season. For players who played this
+# season, the "last played" values are simply this season's. Kept because they
+# don't make regular forecasts worse (15.670 -> 15.667 games, 5-seed average).
+COMEBACK_FEATURES = [
+    "last_played_gp_share",
+    "avg_gp_share_3_played",
+    "age_x_missed_season",
+]
+FEATURES = BASE_FEATURES + COMEBACK_FEATURES
 TARGET = "gp_share_next"
 
 
@@ -224,6 +234,19 @@ def add_history(df: pd.DataFrame) -> pd.DataFrame:
     df["avg_gp_share_3yr"] = window("gp_share", "mean", fill=0.0)
     # Seasons actually played, so sat-out rows don't count as experience.
     df["seasons_in_data"] = by_player.missed_season.transform(lambda m: (1 - m).cumsum())
+
+    # Comeback inputs: computed over seasons actually played, then carried forward
+    # into any sat-out seasons that follow.
+    df = df.sort_values(["PLAYER_ID", "season_idx"])
+    played = df.missed_season == 0
+    df["last_played_gp_share"] = df.gp_share.where(played)
+    df["avg_gp_share_3_played"] = (
+        df[played].groupby("PLAYER_ID").gp_share.transform(lambda g: g.rolling(3, min_periods=1).mean())
+    )
+    df[["last_played_gp_share", "avg_gp_share_3_played"]] = (
+        df.groupby("PLAYER_ID")[["last_played_gp_share", "avg_gp_share_3_played"]].ffill()
+    )
+    df["age_x_missed_season"] = df.age * df.missed_season
     return df
 
 
@@ -252,7 +275,8 @@ def build() -> pd.DataFrame:
     df = add_target(add_history(add_missed_seasons(season_table())))
     id_cols = ["SEASON", "season_idx", "PLAYER_ID", "PLAYER_NAME", "TEAM_ABBREVIATION", "GP", "season_games"]
     target_cols = [TARGET, "gp_next", "season_games_next", "is_forecast"]
-    return df[id_cols + FEATURES + target_cols].sort_values(["season_idx", "PLAYER_ID"]).reset_index(drop=True)
+    feature_cols = list(dict.fromkeys(BASE_FEATURES + COMEBACK_FEATURES))
+    return df[id_cols + feature_cols + target_cols].sort_values(["season_idx", "PLAYER_ID"]).reset_index(drop=True)
 
 
 def load_table() -> pd.DataFrame:

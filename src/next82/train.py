@@ -1,9 +1,15 @@
-"""Evaluate all models, then train the final model and write next-season forecasts.
+"""Evaluate all models, then train the final models and write next-season forecasts.
+
+Regular players get one forecast from the main model. Players returning from a
+missed season get a two-part forecast instead, because comeback seasons split
+into "played a lot" and "barely played" and one number lands in between:
+    p_setback         chance of playing fewer than config.SETBACK_GAMES of 82
+    games_if_healthy  forecast from a model trained only on seasons without a setback
 
 Outputs:
-    models/metrics.json               test-set error for each model
-    models/lightgbm.joblib            final model trained on all labeled seasons
-    data/processed/forecasts.parquet  one row per player: forecast + SHAP values
+    models/metrics.json               test-set error for each model + comeback evaluation
+    models/lightgbm.joblib            final models trained on all labeled seasons
+    data/processed/forecasts.parquet  one row per player: forecasts + SHAP values
 
 Usage:
     python -m next82.train
@@ -11,15 +17,21 @@ Usage:
 import json
 
 import joblib
+import numpy as np
 import pandas as pd
+from sklearn.metrics import brier_score_loss, roc_auc_score
 
 from next82 import config, evaluate, explain, models
-from next82.features import FEATURES, load_table
+from next82.features import FEATURES, TARGET, load_table
 
 FINAL_MODEL = "LightGBM"
 MODEL_PATH = config.MODELS_DIR / "lightgbm.joblib"
 METRICS_PATH = config.MODELS_DIR / "metrics.json"
 FORECASTS_PATH = config.PROCESSED_DIR / "forecasts.parquet"
+
+# Comeback seasons are rare, so the comeback models are scored season by season:
+# each season from here on is predicted by models trained only on earlier seasons.
+COMEBACK_EVAL_FROM = "2000-01"
 
 
 def run_evaluation(df: pd.DataFrame) -> dict:
@@ -28,10 +40,9 @@ def run_evaluation(df: pd.DataFrame) -> dict:
 
     print(f"Train: {train.SEASON.min()} to {train.SEASON.max()} ({len(train):,} rows)")
     print(f"Test:  {test.SEASON.min()} to {test.SEASON.max()} ({len(test):,} rows)\n")
-    n_comeback = next(iter(results.values()))["n_comeback"]
-    print(f"{'Model':20s} {'MAE all':>8s} {'MAE rotation':>13s} {f'MAE comeback (n={n_comeback})':>22s}")
+    print(f"{'Model':20s} {'MAE all':>8s} {'MAE rotation':>13s}")
     for name, r in results.items():
-        print(f"{name:20s} {r['mae_all']:8.2f} {r['mae_rotation']:13.2f} {r['mae_comeback']:22.2f}")
+        print(f"{name:20s} {r['mae_all']:8.2f} {r['mae_rotation']:13.2f}")
 
     return {
         "train_seasons": [train.SEASON.min(), train.SEASON.max()],
@@ -41,26 +52,74 @@ def run_evaluation(df: pd.DataFrame) -> dict:
     }
 
 
+def evaluate_comebacks(df: pd.DataFrame) -> dict:
+    labeled = df[~df.is_forecast]
+    parts = []
+    for s in range(config.SEASONS.index(COMEBACK_EVAL_FROM), labeled.season_idx.max() + 1):
+        train = labeled[labeled.season_idx < s]
+        test = labeled[(labeled.season_idx == s) & (labeled.missed_season == 1)]
+        if test.empty:
+            continue
+        parts.append(test.assign(
+            p_setback=models.predict_setback(models.fit_setback(train), test),
+            healthy=np.clip(models.fit_healthy(train).predict(test[FEATURES]), 0, 1),
+            main=models.predict(models.fit(FINAL_MODEL, train), test),
+        ))
+    c = pd.concat(parts)
+    setback = models.is_setback(c)
+    ok = ~setback
+    out = {
+        "from_season": COMEBACK_EVAL_FROM,
+        "n": len(c),
+        "setback_rate": float(setback.mean()),
+        "setback_auc": float(roc_auc_score(setback, c.p_setback)),
+        "setback_brier": float(brier_score_loss(setback, c.p_setback)),
+        "setback_brier_base_rate": float(brier_score_loss(setback, np.full(len(c), setback.mean()))),
+        "n_healthy": int(ok.sum()),
+        "mae_healthy_two_part": evaluate.mae_games(c[ok], c.healthy[ok].to_numpy()),
+        "mae_healthy_main_model": evaluate.mae_games(c[ok], c.main[ok].to_numpy()),
+    }
+    print(f"\nComeback seasons {COMEBACK_EVAL_FROM} on (n={out['n']}, setback rate {out['setback_rate']:.0%}):")
+    print(f"  Setback chance: AUC {out['setback_auc']:.3f}, Brier {out['setback_brier']:.3f} "
+          f"(base rate only: {out['setback_brier_base_rate']:.3f})")
+    print(f"  Games if healthy (n={out['n_healthy']}): two-part {out['mae_healthy_two_part']:.2f} "
+          f"vs main model {out['mae_healthy_main_model']:.2f}")
+    return out
+
+
+def _add_shap(rows: pd.DataFrame, model) -> pd.DataFrame:
+    values, base = explain.shap_values(model, rows)
+    rows = rows.copy()
+    for i, f in enumerate(FEATURES):
+        rows[f"shap_{f}"] = values[:, i]
+    rows["shap_base"] = base
+    return rows
+
+
 def train_final(df: pd.DataFrame):
     labeled, upcoming = df[~df.is_forecast], df[df.is_forecast].copy()
-    model = models.fit(FINAL_MODEL, labeled)
+    main, setback, healthy = models.fit(FINAL_MODEL, labeled), models.fit_setback(labeled), models.fit_healthy(labeled)
 
-    upcoming["pred_share"] = models.predict(model, upcoming)
+    upcoming["pred_share"] = models.predict(main, upcoming)
     upcoming["pred_games"] = upcoming.pred_share * explain.GAMES
-    values, base = explain.shap_values(model, upcoming)
-    for i, f in enumerate(FEATURES):
-        upcoming[f"shap_{f}"] = values[:, i]
-    upcoming["shap_base"] = base
-    return model, upcoming
+    upcoming["p_setback"] = models.predict_setback(setback, upcoming)
+    upcoming["games_if_healthy"] = np.clip(healthy.predict(upcoming[FEATURES]), 0, 1) * explain.GAMES
+
+    # Factors explain the number each player is shown: the main forecast for
+    # regular players, the if-healthy forecast for comeback players.
+    comeback = upcoming.missed_season == 1
+    upcoming = pd.concat([_add_shap(upcoming[~comeback], main), _add_shap(upcoming[comeback], healthy)])
+    return {"main": main, "setback": setback, "healthy": healthy}, upcoming
 
 
 def main():
     df = load_table()
     metrics = run_evaluation(df)
-    model, forecasts = train_final(df)
+    metrics["comeback"] = evaluate_comebacks(df)
+    final_models, forecasts = train_final(df)
 
     config.MODELS_DIR.mkdir(exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
+    joblib.dump(final_models, MODEL_PATH)
     METRICS_PATH.write_text(json.dumps(metrics, indent=2))
     forecasts.to_parquet(FORECASTS_PATH, index=False)
     print(f"\nSaved {len(forecasts)} forecasts for the season after {forecasts.SEASON.iloc[0]}")

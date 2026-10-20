@@ -53,7 +53,37 @@ def test_format_value():
 def test_shap_values_add_up_to_forecast():
     f = pd.read_parquet(FORECASTS_PATH)
     total = f.shap_base + f[[f"shap_{c}" for c in FEATURES]].sum(axis=1)
-    assert np.allclose(total, f.pred_games)
+    # Factors explain the number shown: if-healthy games for comeback players.
+    shown = f.games_if_healthy.where(f.missed_season == 1, f.pred_games)
+    assert np.allclose(total, shown)
     factors = top_factors(f.iloc[0])
     assert len(factors) == 6
     assert factors.impact_games.abs().is_monotonic_decreasing
+
+
+@pytest.mark.skipif(not FORECASTS_PATH.exists(), reason="forecasts not built")
+def test_comeback_forecasts():
+    f = pd.read_parquet(FORECASTS_PATH)
+    assert f.p_setback.between(0, 1).all()
+    assert f.games_if_healthy.between(0, 82).all()
+    hali = f[f.PLAYER_NAME == "Tyrese Haliburton"].iloc[0]
+    assert hali.missed_season == 1
+    # The if-healthy forecast should sit well above the blended main-model number.
+    assert hali.games_if_healthy > hali.pred_games
+
+
+@pytest.mark.skipif(not OUTPUT_PATH.exists(), reason="feature table not built")
+def test_similar_comebacks_are_past_returns():
+    from next82.explain import similar_comebacks
+
+    table = load_table()
+    row = table[(table.PLAYER_NAME == "Tyrese Haliburton") & table.is_forecast].iloc[0]
+    similar = similar_comebacks(row, table)
+    assert len(similar) == 5
+    assert "Tyrese Haliburton" not in set(similar.player)
+    assert similar.comeback_games.between(0, 82).all()
+
+
+def test_setback_definition():
+    df = pd.DataFrame({"gp_share_next": [0.0, 19 / 82, 20 / 82, 0.9]})
+    assert models.is_setback(df).tolist() == [True, True, False, False]

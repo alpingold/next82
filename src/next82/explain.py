@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import shap
 
+from next82 import config
 from next82.features import FEATURES
 
 GAMES = 82
@@ -36,7 +37,10 @@ LABELS = {
     "missed_end_lag1": "Games missed at end of last season",
     "major_gaps_3yr": "Absences of 10+ games, last 3 seasons",
     "avg_gp_share_3yr": "Average games played, last 3 seasons",
-    "seasons_in_data": "Seasons in the NBA since 2015-16",
+    "seasons_in_data": f"Seasons in the NBA since {config.SEASONS[0]}",
+    "last_played_gp_share": "Games played, last season played",
+    "avg_gp_share_3_played": "Average games, last 3 seasons played",
+    "age_x_missed_season": "Age, if returning from a missed season",
 }
 
 
@@ -44,7 +48,8 @@ def format_value(feature: str, value) -> str:
     """Human-readable value for a feature, e.g. '38 of 82 games'."""
     if pd.isna(value):
         return "no data"
-    if feature in ("gp_share", "gp_share_lag1", "gp_share_lag2", "avg_gp_share_3yr"):
+    if feature in ("gp_share", "gp_share_lag1", "gp_share_lag2", "avg_gp_share_3yr",
+                   "last_played_gp_share", "avg_gp_share_3_played"):
         return f"{value * GAMES:.0f} of {GAMES} games"
     if feature in ("longest_gap", "missed_start", "missed_end", "longest_gap_lag1", "missed_end_lag1"):
         return f"{value:.0f} games"
@@ -54,6 +59,8 @@ def format_value(feature: str, value) -> str:
         return f"{value:.1f}"
     if feature in ("usg_pct", "min_share"):
         return f"{value:.0%}"
+    if feature == "age_x_missed_season":
+        return f"{value:.0f}" if value else "not returning"
     if feature == "height_in":
         return f"{int(value) // 12}'{int(value) % 12}\""
     if feature == "weight_lb":
@@ -80,3 +87,24 @@ def top_factors(row: pd.Series, n: int = 6) -> pd.DataFrame:
         ],
         "impact_games": top.to_numpy(),
     })
+
+
+# Similar past comebacks: nearest players on these inputs, each divided by a scale
+# so that e.g. 4 years of age counts about as much as 5 minutes per game.
+SIMILARITY = {"age": 4, "mpg_lag1": 5, "last_played_gp_share": 0.15, "avg_gp_share_3_played": 0.15}
+
+
+def similar_comebacks(row: pd.Series, table: pd.DataFrame, n: int = 5) -> pd.DataFrame:
+    """Past players who returned from their first missed season, most similar to `row` first."""
+    past = table[(table.missed_season == 1) & (table.missed_season_lag1 == 0) & ~table.is_forecast]
+    past = past.dropna(subset=list(SIMILARITY))
+    distance = sum(((past[c] - row[c]) / scale) ** 2 for c, scale in SIMILARITY.items()) ** 0.5
+    nearest = past.loc[distance.nsmallest(n).index]
+    return pd.DataFrame({
+        "player": nearest.PLAYER_NAME,
+        "missed": nearest.SEASON,
+        "age": nearest.age.astype(int),
+        "before": (nearest.last_played_gp_share * GAMES).round().astype(int).astype(str) + " games, "
+        + nearest.mpg_lag1.round(1).astype(str) + " min",
+        "comeback_games": (nearest.gp_share_next * GAMES).round().astype(int),
+    }).reset_index(drop=True)

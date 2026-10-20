@@ -11,7 +11,8 @@ import pandas as pd
 import streamlit as st
 
 from next82 import config
-from next82.explain import GAMES, top_factors
+from next82.explain import GAMES, similar_comebacks, top_factors
+from next82.features import load_table
 from next82.data import load as load_raw
 from next82.train import FORECASTS_PATH, METRICS_PATH
 
@@ -39,8 +40,11 @@ def normalize(text: str) -> str:
 @st.cache_data
 def load():
     if not FORECASTS_PATH.exists():
-        return None, None, None
-    forecasts = pd.read_parquet(FORECASTS_PATH).sort_values("pred_games", ascending=False)
+        return None, None, None, None
+    forecasts = pd.read_parquet(FORECASTS_PATH)
+    # Comeback players are shown their if-healthy forecast plus a setback chance.
+    forecasts["shown_games"] = forecasts.games_if_healthy.where(forecasts.missed_season == 1, forecasts.pred_games)
+    forecasts = forecasts.sort_values("shown_games", ascending=False)
     forecasts["search"] = forecasts.PLAYER_NAME.map(normalize)
     # Every season each player appeared in, straight from the raw stats. (The model
     # table drops some seasons, e.g. ones whose next-season result isn't known yet.)
@@ -49,10 +53,10 @@ def load():
     history = load_raw("player_stats")[["PLAYER_ID", "SEASON", "GP"]].merge(season_games, on="SEASON")
     history["season_idx"] = history.SEASON.map(config.SEASONS.index)
     metrics = json.loads(METRICS_PATH.read_text())
-    return forecasts, history, metrics
+    return forecasts, history, metrics, load_table()
 
 
-forecasts, history, metrics = load()
+forecasts, history, metrics, table = load()
 if forecasts is None:
     st.error("No forecasts found. Run `python -m next82.data`, `python -m next82.features`, then `python -m next82.train`.")
     st.stop()
@@ -60,6 +64,8 @@ if forecasts is None:
 current = forecasts.SEASON.iloc[0]
 target_season = next_season(current)
 mae = metrics["results"][metrics["final_model"]]["mae_all"]
+comeback_eval = metrics["comeback"]
+setback_games = config.SETBACK_GAMES
 
 st.title("Next82")
 st.caption(f"How many games will a player play in {target_season}? Forecasts are based on seasons through {current}.")
@@ -130,11 +136,12 @@ def history_chart(row: pd.Series) -> alt.Chart:
     h["note"] = h.GP.astype(int).astype(str) + " of " + h.season_games.astype(int).astype(str)
     h.loc[h.GP == 0, "note"] = "Missed season"
 
+    label = "Forecast if healthy" if row.missed_season else "Forecast"
     fc = pd.DataFrame({
         "SEASON": [f"{target_season}"],
-        "GP": [round(row.pred_games)],
+        "GP": [round(row.shown_games)],
         "kind": ["Forecast"],
-        "note": [f"Forecast: {row.pred_games:.0f} of {GAMES} (typical error ±{mae:.0f})"],
+        "note": [f"{label}: {row.shown_games:.0f} of {GAMES}"],
     })
     data = pd.concat([h[["SEASON", "GP", "kind", "note"]], fc], ignore_index=True)
 
@@ -160,37 +167,67 @@ if player is not None:
 
     comeback = bool(player.missed_season)
     c1, c2, c3 = st.columns(3)
-    change = None if comeback else f"{player.pred_games - player.gp_share * GAMES:+.0f} vs. {current}"
-    c1.metric(f"{target_season} forecast", f"{player.pred_games:.0f} games", change)
-    c2.metric(f"Played in {current}", "Missed season" if comeback else f"{player.GP} of {player.season_games}")
-    c3.metric("Age", f"{player.age:.0f}")
     if comeback:
+        c1.metric(f"{target_season} if healthy", f"{player.games_if_healthy:.0f} games")
+        c2.metric("Chance of a setback", f"{player.p_setback:.0%}", help=f"Playing fewer than {setback_games} of {GAMES} games.")
+        c3.metric("Age", f"{player.age:.0f}")
         st.info(
-            f"{player.PLAYER_NAME} didn't play in {current}. This is a comeback forecast, based on what happened "
-            "to past players returning from a missed season. Their results varied widely: some played nearly "
-            "every game, others missed a second season.",
+            f"{player.PLAYER_NAME} didn't play in {current}. Players returning from a missed season tend to either "
+            f"play a lot or barely play, so instead of one number this shows two: the forecast if they stay healthy, "
+            f"and the chance of a setback (fewer than {setback_games} games). "
+            f"Based on {comeback_eval['n']} past comeback seasons.",
             icon="ℹ️",
         )
-    st.caption(f"Out of {GAMES} games. Forecasts are off by about {mae:.0f} games on average, so treat this as a range, not an exact count.")
+        st.caption(
+            f"Out of {GAMES} games. For past comebacks, the if-healthy forecast was off by about "
+            f"{comeback_eval['mae_healthy_two_part']:.0f} games on average."
+        )
+    else:
+        change = f"{player.pred_games - player.gp_share * GAMES:+.0f} vs. {current}"
+        c1.metric(f"{target_season} forecast", f"{player.pred_games:.0f} games", change)
+        c2.metric(f"Played in {current}", f"{player.GP} of {player.season_games}")
+        c3.metric("Age", f"{player.age:.0f}")
+        st.caption(f"Out of {GAMES} games. Forecasts are off by about {mae:.0f} games on average, so treat this as a range, not an exact count.")
 
-    st.markdown("#### What's driving the forecast")
+    st.markdown("#### What's driving the forecast" + (" if healthy" if comeback else ""))
+    who = "healthy comeback" if comeback else "player"
     st.caption(
-        f"The average player is forecast at {player.shap_base:.0f} games. "
+        f"The average {who} is forecast at {player.shap_base:.0f} games. "
         "Each bar shows how much one factor moves this player's forecast up or down."
     )
     st.altair_chart(factor_chart(player), width="stretch")
+
+    if comeback:
+        st.markdown("#### Similar past comebacks")
+        st.caption("Players with a similar age and role who missed a season (for any reason), and how many games they played when they came back.")
+        st.dataframe(
+            similar_comebacks(player, table),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "player": "Player",
+                "missed": "Season missed",
+                "age": st.column_config.NumberColumn("Age", format="%d"),
+                "before": "Season before",
+                "comeback_games": st.column_config.ProgressColumn(
+                    "Comeback season", min_value=0, max_value=GAMES, format="%d games"
+                ),
+            },
+        )
 
     st.markdown("#### Games played by season")
     st.altair_chart(history_chart(player), width="stretch")
 
 elif not query:
     st.markdown(f"#### All {target_season} forecasts")
-    table = forecasts.assign(
-        played=forecasts.GP.astype(str) + " of " + forecasts.season_games.astype(str),
-        forecast=forecasts.pred_games.round().astype(int),
-    )[["PLAYER_NAME", "TEAM_ABBREVIATION", "age", "played", "forecast"]]
+    returning = forecasts.missed_season == 1
+    overview = forecasts.assign(
+        played=(forecasts.GP.astype(str) + " of " + forecasts.season_games.astype(str)).where(~returning, "Missed season"),
+        forecast=forecasts.shown_games.round().astype(int),
+        note=("If healthy · " + (forecasts.p_setback * 100).round().astype(int).astype(str) + "% setback chance").where(returning, ""),
+    )[["PLAYER_NAME", "TEAM_ABBREVIATION", "age", "played", "forecast", "note"]]
     st.dataframe(
-        table,
+        overview,
         hide_index=True,
         width="stretch",
         column_config={
@@ -201,17 +238,16 @@ elif not query:
             "forecast": st.column_config.ProgressColumn(
                 f"{target_season} forecast", min_value=0, max_value=GAMES, format="%d games"
             ),
+            "note": "Comeback",
         },
     )
 
 with st.expander("How it works"):
     results = pd.DataFrame(metrics["results"]).T
-    results = results.rename(
-        columns={"mae_all": "All players", "mae_rotation": "Rotation players", "mae_comeback": "Comeback seasons"}
-    )
+    results = results.rename(columns={"mae_all": "All players", "mae_rotation": "Rotation players"})
     st.markdown(
         f"""
-A LightGBM model trained on NBA seasons from 2015-16 to {current}. It uses age, minutes,
+A LightGBM model trained on NBA seasons from {config.SEASONS[0]} to {current}. It uses age, minutes,
 games missed, long absences and the last few seasons of history. Injury data isn't
 available, so long absences come from comparing each player's game log with their team's schedule.
 
@@ -220,11 +256,17 @@ and tested on {metrics['test_seasons'][0]} to {metrics['test_seasons'][1]}, whic
 Average error in games:
 """
     )
-    cols = ["All players", "Rotation players", "Comeback seasons"]
-    st.dataframe(results[cols].astype(float).round(1), width="stretch")
-    n_comeback = next(iter(metrics["results"].values()))["n_comeback"]
-    st.caption(
-        "Rotation players: 15+ minutes per game and at least a quarter of their team's games. "
-        f"Comeback seasons: the season after a player missed a whole season (only {n_comeback} in the test "
-        "seasons, so that column is less reliable)."
+    st.dataframe(results[["All players", "Rotation players"]].astype(float).round(1), width="stretch")
+    st.caption("Rotation players: 15+ minutes per game and at least a quarter of their team's games.")
+    c = comeback_eval
+    st.markdown(
+        f"""
+**Comeback players** (returning from a missed season) get two forecasts from two extra models:
+the chance of a setback (fewer than {setback_games} games) and games if healthy. Tested on
+{c['n']} comeback seasons from {c['from_season']} on, each predicted using only earlier seasons:
+
+- Games if healthy: off by {c['mae_healthy_two_part']:.1f} games on average, vs. {c['mae_healthy_main_model']:.1f} for the main model
+- Setback chance: right more often than guessing the overall rate ({c['setback_rate']:.0%}), but only moderately
+  (AUC {c['setback_auc']:.2f}, where 0.5 is a coin flip and 1.0 is perfect)
+"""
     )
