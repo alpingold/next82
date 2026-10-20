@@ -67,7 +67,8 @@ BASE_FEATURES = [
 
 # Inputs for players coming back from a missed season. For players who played this
 # season, the "last played" values are simply this season's. Kept because they
-# don't make regular forecasts worse (15.670 -> 15.667 games, 5-seed average).
+# don't make regular forecasts worse on the 2022-23 validation season
+# (14.142 -> 14.112 games, 5-seed average; test seasons not used for this choice).
 COMEBACK_FEATURES = [
     "last_played_gp_share",
     "avg_gp_share_3_played",

@@ -12,9 +12,8 @@ import streamlit as st
 
 from next82 import config
 from next82.explain import GAMES, similar_comebacks, top_factors
-from next82.features import load_table
-from next82.data import current_rosters, load as load_raw
-from next82.train import FORECASTS_PATH, METRICS_PATH
+from next82.data import refresh_rosters_in_background, saved_rosters
+from next82.train import FORECASTS_PATH, HISTORY_PATH, METRICS_PATH, PAST_COMEBACKS_PATH
 
 st.set_page_config(page_title="Next82", page_icon="🏀", layout="centered")
 
@@ -37,45 +36,56 @@ def normalize(text: str) -> str:
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
 
 
+APP_FILES = [FORECASTS_PATH, HISTORY_PATH, PAST_COMEBACKS_PATH, METRICS_PATH]
+
+
 @st.cache_data
 def load():
-    if not FORECASTS_PATH.exists():
+    """The app's data: small files written by `python -m next82.train` and committed to git."""
+    if not all(path.exists() for path in APP_FILES):
         return None, None, None, None
     forecasts = pd.read_parquet(FORECASTS_PATH)
     # Comeback players are shown their if-healthy forecast plus a setback chance.
     forecasts["shown_games"] = forecasts.games_if_healthy.where(forecasts.missed_season == 1, forecasts.pred_games)
     forecasts = forecasts.sort_values("shown_games", ascending=False)
     forecasts["search"] = forecasts.PLAYER_NAME.map(normalize)
-    # Every season each player appeared in, straight from the raw stats. (The model
-    # table drops some seasons, e.g. ones whose next-season result isn't known yet.)
-    team_games = load_raw("team_games")
-    season_games = team_games.groupby(["SEASON", "TEAM_ID"]).size().groupby("SEASON").max().rename("season_games")
-    history = load_raw("player_stats")[["PLAYER_ID", "SEASON", "GP"]].merge(season_games, on="SEASON")
-    history["season_idx"] = history.SEASON.map(config.SEASONS.index)
+    history = pd.read_parquet(HISTORY_PATH)
     metrics = json.loads(METRICS_PATH.read_text())
-    return forecasts, history, metrics, load_table()
+    return forecasts, history, metrics, pd.read_parquet(PAST_COMEBACKS_PATH)
 
 
-@st.cache_data(ttl=3600)
-def load_rosters():
-    """Current teams. Reads the saved copy; nba_api is called at most once a day."""
-    return current_rosters()
+@st.cache_resource(ttl=3600)
+def start_roster_refresh(season: str):
+    """Refresh stale rosters in the background, at most once an hour. Never blocks the page."""
+    refresh_rosters_in_background(season)
+    return True
 
 
-forecasts, history, metrics, table = load()
+@st.cache_data(ttl=300)
+def load_rosters(season: str):
+    """The saved rosters. A background refresh replaces the file; this picks it up within 5 minutes."""
+    return saved_rosters(season)
+
+
+forecasts, history, metrics, past = load()
 if forecasts is None:
     st.error("No forecasts found. Run `python -m next82.data`, `python -m next82.features`, then `python -m next82.train`.")
     st.stop()
 
+# Seasons come from the data files, not today's date, so the app stays consistent
+# with the forecasts it has even after a new season finishes.
 current = forecasts.SEASON.iloc[0]
 target_season = next_season(current)
+seasons = sorted(history.SEASON.unique())
+previous = seasons[-2]
 mae = metrics["results"][metrics["final_model"]]["mae_all"]
 comeback_eval = metrics["comeback"]
 setback_games = config.SETBACK_GAMES
 
 # Current teams: players move in the offseason, so the team shown is their team now,
 # not their last-season team. Players on no roster are unsigned or retired.
-rosters = load_rosters()
+start_roster_refresh(target_season)
+rosters = load_rosters(target_season)
 if rosters is not None:
     now = rosters[["PLAYER_ID", "TEAM_ABBREVIATION", "TEAM_FULL_NAME"]].rename(
         columns={"TEAM_ABBREVIATION": "team_now", "TEAM_FULL_NAME": "team_now_name"}
@@ -106,6 +116,11 @@ PLAYER_KEY = "player_label"
 
 st.title("Next82")
 st.caption(f"How many games will a player play in {target_season}? Forecasts are based on seasons through {current}.")
+if config.SEASONS[-1] > current:
+    st.warning(
+        f"The {config.SEASONS[-1]} season has finished, but these forecasts only use data through {current}. "
+        "Rerun the pipeline (see the README) to update them."
+    )
 
 ALL_TEAMS = "All teams"
 team_names = sorted(rosters.TEAM_FULL_NAME.unique()) if rosters is not None else []
@@ -114,7 +129,9 @@ by_abbr = dict(zip(rosters.TEAM_ABBREVIATION, rosters.TEAM_FULL_NAME)) if roster
 default_team = by_abbr.get(wanted.upper(), wanted if wanted in team_names else ALL_TEAMS)
 team = st.selectbox("Team", [ALL_TEAMS, *team_names], index=([ALL_TEAMS, *team_names]).index(default_team))
 if rosters is None:
-    st.caption("Current rosters couldn't be loaded, so the team filter is unavailable.")
+    st.caption("Current rosters haven't been downloaded yet, so the team filter is unavailable.")
+else:
+    st.caption(f"Teams as of {rosters.FETCHED_AT.iloc[0]:%b %-d, %Y}.")
 pool = forecasts if team == ALL_TEAMS else forecasts[forecasts.team_now_name == team]
 
 options = pool.sort_values("recent_minutes", ascending=False).label.tolist()
@@ -140,15 +157,28 @@ def back_to_list():
     st.session_state.table_nonce = st.session_state.get("table_nonce", 0) + 1
 
 
+def played_text(gp: int, season_games: int) -> str:
+    """'62 of 82'. Players traded mid-season can play more games than one team's schedule."""
+    return f"{gp} of {season_games}" + (" (traded)" if gp > season_games else "")
+
+
 def forecast_table(rows: pd.DataFrame, show_team: bool = True, show_all_rows: bool = False):
-    """Sortable table of forecasts, highest first. Clicking a row opens that player."""
+    """Sortable table of forecasts, highest first. Clicking a row opens that player.
+
+    Comeback forecasts (games if healthy) get their own column so they aren't mixed
+    up with regular forecasts, which already account for the risk of missing games.
+    """
     returning = rows.missed_season == 1
     overview = rows.assign(
-        played=(rows.GP.astype(str) + " of " + rows.season_games.astype(str)).where(~returning, "Missed season"),
-        forecast=rows.shown_games.round().astype(int),
-        note=((rows.p_setback * 100).round().astype(int).astype(str) + "% setback chance").where(returning, ""),
-    ).sort_values("forecast", ascending=False)
-    cols = ["PLAYER_NAME", *(["team_label"] if show_team else []), "age", "played", "forecast", "note"]
+        played=[played_text(g, n) for g, n in zip(rows.GP, rows.season_games)],
+        forecast=rows.pred_games.round().where(~returning),
+        comeback=[
+            f"{h:.0f} if healthy · {p:.0%} setback" if r else ""
+            for h, p, r in zip(rows.games_if_healthy, rows.p_setback, returning)
+        ],
+    ).sort_values("shown_games", ascending=False)
+    overview.loc[returning.reindex(overview.index), "played"] = "Missed season"
+    cols = ["PLAYER_NAME", *(["team_label"] if show_team else []), "age", "played", "forecast", "comeback"]
     key = f"table_{st.session_state.get('table_nonce', 0)}"
 
     def open_player():
@@ -168,12 +198,17 @@ def forecast_table(rows: pd.DataFrame, show_team: bool = True, show_all_rows: bo
         column_config={
             "PLAYER_NAME": "Player",
             "team_label": "Team",
-            "age": st.column_config.NumberColumn("Age", format="%d"),
-            "played": f"Played in {current}",
+            "age": st.column_config.NumberColumn("Age", format="%d", width=40),
+            "played": st.column_config.TextColumn(f"Played in {current}", width=110),
             "forecast": st.column_config.ProgressColumn(
-                f"{target_season} forecast", min_value=0, max_value=GAMES, format="%d games"
+                f"{target_season} forecast", min_value=0, max_value=GAMES, format="%d games", width=150
             ),
-            "note": "Comeback (if healthy)",
+            "comeback": st.column_config.TextColumn(
+                "Comeback",
+                width=185,
+                help=f"Players returning from a missed season: games if healthy, and the chance of "
+                f"a setback (fewer than {config.SETBACK_GAMES} games)",
+            ),
         },
     )
 
@@ -218,10 +253,10 @@ def factor_chart(row: pd.Series) -> alt.Chart:
 
 
 def history_chart(row: pd.Series) -> alt.Chart:
-    h = history[history.PLAYER_ID == row.PLAYER_ID].set_index("season_idx")
+    h = history[history.PLAYER_ID == row.PLAYER_ID].set_index("SEASON")
     # Seasons after a player's first appearance with no record were missed entirely.
-    h = h.reindex(range(h.index.min(), len(config.SEASONS)))
-    h["SEASON"] = [config.SEASONS[i] for i in h.index]
+    h = h.reindex(seasons[seasons.index(h.index.min()):])
+    h["SEASON"] = h.index
     h["GP"] = h.GP.fillna(0)
     h["season_games"] = h.season_games.fillna(GAMES)
     h["kind"] = "Played"
@@ -283,7 +318,7 @@ if player is not None:
     else:
         change = f"{player.pred_games - player.gp_share * GAMES:+.0f} vs. {current}"
         c1.metric(f"{target_season} forecast", f"{player.pred_games:.0f} games", change)
-        c2.metric(f"Played in {current}", f"{player.GP} of {player.season_games}")
+        c2.metric(f"Played in {current}", played_text(player.GP, player.season_games))
         c3.metric("Age", f"{player.age:.0f}")
         st.caption(f"Out of {GAMES} games. Forecasts are off by about {mae:.0f} games on average, so treat this as a range, not an exact count.")
 
@@ -299,7 +334,7 @@ if player is not None:
         st.markdown("#### Similar past comebacks")
         st.caption("Players with a similar age and role who missed a season (for any reason), and how many games they played when they came back.")
         st.dataframe(
-            similar_comebacks(player, table),
+            similar_comebacks(player, past),
             hide_index=True,
             width="stretch",
             column_config={
@@ -323,7 +358,7 @@ elif team != ALL_TEAMS:
     if len(no_forecast):
         st.caption(
             f"No forecast yet: {', '.join(sorted(no_forecast.PLAYER_NAME))}. Forecasts need NBA games in "
-            f"{config.SEASONS[-2]} or {current}, so rookies aren't included."
+            f"{previous} or {current}, so rookies aren't included."
         )
 
 else:

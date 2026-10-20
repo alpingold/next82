@@ -12,21 +12,33 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-## Pipeline
+## Run the app
+
+The files the app needs are committed, so after setup it runs straight away:
 
 ```bash
-python -m next82.data        # download raw data from nba_api (~6 min, skips files already present)
-python -m next82.features    # build data/processed/player_seasons.parquet
-python -m next82.train       # evaluate models, train final models, write forecasts (~1 min)
 streamlit run app/streamlit_app.py
 ```
 
 Link straight to a player or team with `?player=<name>` or `?team=<abbreviation>`,
 e.g. `http://localhost:8501/?player=Embiid` or `http://localhost:8501/?team=IND`.
 
-The team filter uses each player's current 2026-27 team from nba_api. Rosters are saved to
-`data/raw/current_rosters/` and refreshed at most once a day (`python -m next82.data --rosters`
-forces a refresh). Rookies have no NBA history, so they're listed without a forecast.
+Teams are each player's current team from nba_api, saved in `data/raw/current_rosters/`.
+When the saved rosters are over a day old, the app refreshes them in the background, so a
+slow or blocked nba_api never holds up a page. `python -m next82.data --rosters` refreshes
+them by hand. Rookies have no NBA history, so they're listed without a forecast.
+
+## Rebuild the forecasts
+
+```bash
+python -m next82.data        # download raw data from nba_api (~6 min, skips files already present)
+python -m next82.features    # build data/processed/player_seasons.parquet
+python -m next82.train       # evaluate models, train final models, write the app files (~1 min)
+```
+
+The latest season moves forward automatically: a season counts as finished from May 1, so
+from May 2027 the pipeline downloads 2026-27 and forecasts 2027-28. Until it's rerun, the app
+shows a warning that newer data is available. Set `NEXT82_LAST_SEASON=2025` to pin a season.
 
 ## How it works
 
@@ -47,8 +59,10 @@ forces a refresh). Rookies have no NBA history, so they're listed without a fore
   inputs (games in the last season played, average of the last 3 seasons played, age × missed season).
 - **Models:** "same as last year" and 3-year-average baselines, ridge regression, LightGBM
   (main forecast), plus a LightGBM setback classifier and if-healthy model for comebacks.
-- **Evaluation:** train on 1996-97 to 2022-23, test on 2023-24 and 2024-25. Comeback models
-  are tested season by season from 2000-01, each season predicted using only earlier seasons.
+- **Evaluation:** train on 1996-97 to 2022-23, test on 2023-24 and 2024-25. Model settings and
+  which features to keep were chosen on 2022-23 as a validation season, so the test seasons are
+  only used to report accuracy. Comeback models are tested season by season from 2000-01, each
+  season predicted using only earlier seasons.
 - **Explanations:** SHAP values from LightGBM, shown in games.
 
 ## Results
@@ -72,12 +86,16 @@ Comeback seasons (524 from 2000-01 on, 69% were setbacks):
 | Setback chance, AUC | 0.69 (0.5 = coin flip) |
 | Setback chance, Brier score | 0.194 (guessing the overall rate: 0.215) |
 
+The setback chances are roughly calibrated: recalibrating them (isotonic, sigmoid, or a
+comeback-only correction) didn't improve them when tested on earlier seasons.
+
 ## Layout
 
 ```
-data/raw/          raw pulls from nba_api (gitignored)
-data/processed/    player_seasons.parquet, forecasts.parquet (gitignored)
-models/            lightgbm.joblib, metrics.json (gitignored)
+data/raw/          raw pulls from nba_api (gitignored); current_rosters/ (committed)
+data/processed/    player_seasons.parquet (gitignored); forecasts, history and
+                   past_comebacks .parquet (committed, used by the app)
+models/            lightgbm.joblib (gitignored), metrics.json (committed)
 notebooks/         exploration
 src/next82/
   config.py        paths, seasons, settings
@@ -89,7 +107,8 @@ src/next82/
   train.py         evaluation + final models + forecasts
 app/               Streamlit app
 .streamlit/        app theme
-tests/
+.github/workflows/ runs the tests on every push
+tests/             app tests run on the committed files; data tests skip without the full data
 ```
 
 ## Limitations
@@ -97,5 +116,7 @@ tests/
 - nba_api has no injury data. Absences are inferred from game logs, so rest days,
   suspensions and falling out of the rotation look the same as injuries.
 - Forecasts assume the player is in the league next season.
+- The main model is only about 2 games more accurate than "same as last year" (15.6 vs 17.8).
+  Without injury data, much of a player's availability can't be predicted.
 - Comeback forecasts can't see injury type, medical clearance or team plans, and "missed a
   season" includes players who were unsigned or playing overseas.

@@ -4,10 +4,20 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 .pytest_cache/
+*.egg-info/
+*.tmp
 
 # Generated data and model artifacts
 data/raw/*
 data/processed/*
 models/*
 !**/.gitkeep
-*.egg-info/
+
+# Small files the app needs, committed so it runs without the pipeline
+!data/processed/forecasts.parquet
+!data/processed/history.parquet
+!data/processed/past_comebacks.parquet
+!models/metrics.json
+!data/raw/current_rosters/
+data/raw/current_rosters/*
+!data/raw/current_rosters/*.parquet

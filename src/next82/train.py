@@ -7,9 +7,14 @@ into "played a lot" and "barely played" and one number lands in between:
     games_if_healthy  forecast from a model trained only on seasons without a setback
 
 Outputs:
-    models/metrics.json               test-set error for each model + comeback evaluation
-    models/lightgbm.joblib            final models trained on all labeled seasons
-    data/processed/forecasts.parquet  one row per player: forecasts + SHAP values
+    models/metrics.json                    test-set error for each model + comeback evaluation
+    models/lightgbm.joblib                 final models trained on all labeled seasons
+    data/processed/forecasts.parquet       one row per player: forecasts + SHAP values
+    data/processed/history.parquet         games played per player per season (app chart)
+    data/processed/past_comebacks.parquet  past comeback seasons (app "similar comebacks")
+
+The app reads only metrics.json and the three data/processed files above, so those
+are committed to git and the app runs without re-running the pipeline.
 
 Usage:
     python -m next82.train
@@ -21,13 +26,15 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
-from next82 import config, evaluate, explain, models
+from next82 import config, data, evaluate, explain, models
 from next82.features import FEATURES, TARGET, load_table
 
 FINAL_MODEL = "LightGBM"
 MODEL_PATH = config.MODELS_DIR / "lightgbm.joblib"
 METRICS_PATH = config.MODELS_DIR / "metrics.json"
 FORECASTS_PATH = config.PROCESSED_DIR / "forecasts.parquet"
+HISTORY_PATH = config.PROCESSED_DIR / "history.parquet"
+PAST_COMEBACKS_PATH = config.PROCESSED_DIR / "past_comebacks.parquet"
 
 # Comeback seasons are rare, so the comeback models are scored season by season:
 # each season from here on is predicted by models trained only on earlier seasons.
@@ -112,6 +119,26 @@ def train_final(df: pd.DataFrame):
     return {"main": main, "setback": setback, "healthy": healthy}, upcoming
 
 
+def season_history() -> pd.DataFrame:
+    """Games played by every player in every season, and each season's length.
+
+    Built from the raw stats rather than the model table, which drops some seasons
+    (e.g. ones whose next-season result isn't known yet).
+    """
+    team_games = data.load("team_games")
+    season_games = team_games.groupby(["SEASON", "TEAM_ID"]).size().groupby("SEASON").max().rename("season_games")
+    history = data.load("player_stats")[["PLAYER_ID", "SEASON", "GP"]].merge(season_games, on="SEASON")
+    return history.sort_values(["PLAYER_ID", "SEASON"]).reset_index(drop=True)
+
+
+def past_comebacks(df: pd.DataFrame) -> pd.DataFrame:
+    """First missed seasons with a known comeback result, for the similar-comebacks list."""
+    rows = df[(df.missed_season == 1) & (df.missed_season_lag1 == 0) & ~df.is_forecast]
+    cols = ["PLAYER_ID", "PLAYER_NAME", "SEASON", "missed_season", "missed_season_lag1", "is_forecast",
+            "gp_share_next", *explain.SIMILARITY]
+    return rows[list(dict.fromkeys(cols))].reset_index(drop=True)
+
+
 def main():
     df = load_table()
     metrics = run_evaluation(df)
@@ -122,6 +149,8 @@ def main():
     joblib.dump(final_models, MODEL_PATH)
     METRICS_PATH.write_text(json.dumps(metrics, indent=2))
     forecasts.to_parquet(FORECASTS_PATH, index=False)
+    season_history().to_parquet(HISTORY_PATH, index=False)
+    past_comebacks(df).to_parquet(PAST_COMEBACKS_PATH, index=False)
     print(f"\nSaved {len(forecasts)} forecasts for the season after {forecasts.SEASON.iloc[0]}")
 
 

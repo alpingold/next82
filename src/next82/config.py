@@ -1,4 +1,6 @@
 """Project-wide paths and settings."""
+import os
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -7,9 +9,22 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 MODELS_DIR = ROOT / "models"
 
-# Seasons to collect, in nba_api format ("2015-16").
+
+
+def last_completed_season(today: date | None = None) -> int:
+    """Start year of the latest finished regular season.
+
+    The regular season ends in mid-April, so a season counts as finished from May 1:
+    on 2026-10-19 that's 2025 (2025-26); from 2027-05-01 it's 2026 (2026-27).
+    """
+    today = today or date.today()
+    return today.year - 1 if today.month >= 5 else today.year - 2
+
+
+# Seasons to collect, in nba_api format ("2015-16"). The last one moves forward
+# automatically each May; set NEXT82_LAST_SEASON (e.g. 2025) to pin it.
 FIRST_SEASON = 1996
-LAST_SEASON = 2025
+LAST_SEASON = int(os.environ.get("NEXT82_LAST_SEASON", last_completed_season()))
 SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(FIRST_SEASON, LAST_SEASON + 1)]
 
 # The season being forecast. Current rosters (who plays where now) come from this season.

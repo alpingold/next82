@@ -1,0 +1,56 @@
+{
+  "train_seasons": [
+    "1996-97",
+    "2022-23"
+  ],
+  "test_seasons": [
+    "2023-24",
+    "2024-25"
+  ],
+  "final_model": "LightGBM",
+  "results": {
+    "Same as last year": {
+      "mae_all": 17.778947368421054,
+      "mae_rotation": 16.818481848184817,
+      "mae_comeback": 21.724137931034484,
+      "n_all": 952,
+      "n_rotation": 606,
+      "n_comeback": 31
+    },
+    "3-year average": {
+      "mae_all": 17.187192982456143,
+      "mae_rotation": 16.336908690869087,
+      "mae_comeback": 13.091954022988507,
+      "n_all": 952,
+      "n_rotation": 606,
+      "n_comeback": 31
+    },
+    "Linear regression": {
+      "mae_all": 15.545441709567788,
+      "mae_rotation": 14.868872770044717,
+      "mae_comeback": 13.374418721508492,
+      "n_all": 952,
+      "n_rotation": 606,
+      "n_comeback": 31
+    },
+    "LightGBM": {
+      "mae_all": 15.61206783203998,
+      "mae_rotation": 14.698923086112096,
+      "mae_comeback": 14.316565102377748,
+      "n_all": 952,
+      "n_rotation": 606,
+      "n_comeback": 31
+    }
+  },
+  "comeback": {
+    "from_season": "2000-01",
+    "n": 524,
+    "setback_rate": 0.6870229007633588,
+    "setback_auc": 0.6865345528455286,
+    "setback_brier": 0.19408229126392781,
+    "setback_brier_base_rate": 0.21502243459005885,
+    "n_healthy": 164,
+    "mae_healthy_two_part": 15.093603952584262,
+    "mae_healthy_main_model": 30.83624480665665
+  }
+}

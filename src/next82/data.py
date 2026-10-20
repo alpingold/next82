@@ -12,6 +12,7 @@ Usage:
     python -m next82.data --rosters          # refresh current rosters only
 """
 import argparse
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -137,25 +138,49 @@ def fetch_current_rosters(season: str = config.FORECAST_SEASON) -> pd.DataFrame:
     })
     path = roster_path(season)
     path.parent.mkdir(parents=True, exist_ok=True)
-    out.to_parquet(path, index=False)
+    # Write to a temporary file first so a reader never sees a half-written file.
+    tmp = path.with_suffix(".tmp")
+    out.to_parquet(tmp, index=False)
+    tmp.replace(path)
     return out
 
 
-def current_rosters(season: str = config.FORECAST_SEASON) -> pd.DataFrame | None:
-    """Current rosters, refreshed from nba_api when the saved copy is over a day old.
-
-    Falls back to the saved copy if the API call fails. Returns None if there is
-    no saved copy and the API can't be reached.
-    """
+def saved_rosters(season: str = config.FORECAST_SEASON) -> pd.DataFrame | None:
+    """The saved rosters, without calling the API. None if never fetched."""
     path = roster_path(season)
-    saved = pd.read_parquet(path) if path.exists() else None
+    return pd.read_parquet(path) if path.exists() else None
+
+
+def rosters_are_stale(season: str = config.FORECAST_SEASON) -> bool:
+    saved = saved_rosters(season)
     max_age = timedelta(hours=config.ROSTER_MAX_AGE_HOURS)
-    if saved is not None and datetime.now() - saved.FETCHED_AT.iloc[0] < max_age:
-        return saved
-    try:
-        return fetch_current_rosters(season)
-    except Exception:
-        return saved
+    return saved is None or datetime.now() - saved.FETCHED_AT.iloc[0] >= max_age
+
+
+_refresh_lock = threading.Lock()
+
+
+def refresh_rosters_in_background(season: str = config.FORECAST_SEASON) -> threading.Thread | None:
+    """Start refreshing stale rosters in a background thread and return immediately.
+
+    Used by the app so a slow or blocked nba_api never holds up a page load. Does
+    nothing if the saved rosters are fresh or a refresh is already running. If the
+    refresh fails, the saved copy stays in place.
+    """
+    if not rosters_are_stale(season) or not _refresh_lock.acquire(blocking=False):
+        return None
+
+    def run():
+        try:
+            fetch_current_rosters(season)
+        except Exception:
+            pass
+        finally:
+            _refresh_lock.release()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
 
 
 def main():

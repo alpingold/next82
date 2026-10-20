@@ -34,25 +34,33 @@ def _saved_roster(path, fetched_at):
     }).to_parquet(path, index=False)
 
 
-def test_rosters_use_fresh_saved_copy_without_api(tmp_path, monkeypatch):
+def test_fresh_rosters_are_not_refreshed(tmp_path, monkeypatch):
     import pandas as pd
     from next82 import data
 
     monkeypatch.setattr(config, "RAW_DIR", tmp_path)
     _saved_roster(data.roster_path(), pd.Timestamp.now())
     monkeypatch.setattr(data, "fetch_current_rosters", lambda season=None: pytest.fail("API should not be called"))
-    assert data.current_rosters().TEAM_ABBREVIATION.tolist() == ["IND"]
+    assert data.refresh_rosters_in_background() is None
+    assert data.saved_rosters().TEAM_ABBREVIATION.tolist() == ["IND"]
 
 
-def test_rosters_fall_back_to_stale_copy_when_api_fails(tmp_path, monkeypatch):
+def test_stale_rosters_refresh_in_background_and_survive_failure(tmp_path, monkeypatch):
     import pandas as pd
     from next82 import data
 
     monkeypatch.setattr(config, "RAW_DIR", tmp_path)
     _saved_roster(data.roster_path(), pd.Timestamp.now() - pd.Timedelta(days=3))
+    calls = []
 
     def offline(season=None):
+        calls.append(season)
         raise ConnectionError("offline")
 
     monkeypatch.setattr(data, "fetch_current_rosters", offline)
-    assert data.current_rosters().TEAM_ABBREVIATION.tolist() == ["IND"]
+    thread = data.refresh_rosters_in_background()
+    assert thread is not None
+    thread.join(timeout=5)
+    assert calls  # the refresh was attempted off the calling thread
+    assert data.saved_rosters().TEAM_ABBREVIATION.tolist() == ["IND"]  # saved copy kept
+    assert data.refresh_rosters_in_background() is not None  # lock released after failure
