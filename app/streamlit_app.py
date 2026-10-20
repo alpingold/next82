@@ -85,6 +85,25 @@ else:
     forecasts = forecasts.assign(team_now=pd.NA, team_now_name=pd.NA)
 forecasts["team_label"] = forecasts.team_now.fillna("No team")
 
+
+def search_label(row) -> str:
+    """'Name · TEAM', plus an accent-free spelling so typing 'jokic' finds 'Nikola Jokić'."""
+    words = row.PLAYER_NAME.split()
+    plain = [unicodedata.normalize("NFKD", w).encode("ascii", "ignore").decode() for w in words]
+    changed = [p for p, w in zip(plain, words) if p != w]
+    alias = f" ({' '.join(changed)})" if changed else ""
+    return f"{row.PLAYER_NAME}{alias} · {row.team_label}"
+
+
+forecasts["label"] = [search_label(r) for r in forecasts.itertuples()]
+same = forecasts.label.duplicated(keep=False)
+forecasts.loc[same, "label"] += ", age " + forecasts.loc[same, "age"].astype(int).astype(str)
+# Search suggestions list the best-known players first: minutes in their last season played.
+recent_mpg = forecasts.mpg.fillna(forecasts.mpg_lag1)
+forecasts["recent_minutes"] = (recent_mpg * forecasts.last_played_gp_share * GAMES).fillna(0)
+
+PLAYER_KEY = "player_label"
+
 st.title("Next82")
 st.caption(f"How many games will a player play in {target_season}? Forecasts are based on seasons through {current}.")
 
@@ -98,25 +117,31 @@ if rosters is None:
     st.caption("Current rosters couldn't be loaded, so the team filter is unavailable.")
 pool = forecasts if team == ALL_TEAMS else forecasts[forecasts.team_now_name == team]
 
-query = st.text_input("Search a player", value=st.query_params.get("player", ""), placeholder="e.g. Embiid, LeBron, Jokic")
-matches = pool[pool.search.str.contains(normalize(query), regex=False)] if query else pool.iloc[0:0]
+options = pool.sort_values("recent_minutes", ascending=False).label.tolist()
+if PLAYER_KEY not in st.session_state:
+    # First load: open the player from a ?player= link, if any.
+    wanted = normalize(st.query_params.get("player", ""))
+    st.session_state[PLAYER_KEY] = next((o for o in options if wanted and wanted in normalize(o)), None)
+if st.session_state[PLAYER_KEY] not in options:
+    st.session_state[PLAYER_KEY] = None  # e.g. the team filter changed
+choice = st.selectbox(
+    "Search a player",
+    options,
+    key=PLAYER_KEY,
+    placeholder="Start typing a name, e.g. LeBron or Jokic",
+    filter_mode="contains",
+)
+player = pool[pool.label == choice].iloc[0] if choice else None
 
-player = None
-if query and matches.empty:
-    where = f"on the {team}" if team != ALL_TEAMS else f"who played in {current} or {config.SEASONS[-2]}"
-    st.warning(f"No player matching “{query}” {where}.")
-elif len(matches) == 1:
-    player = matches.iloc[0]
-elif len(matches) > 1:
-    matches = matches.sort_values("PLAYER_NAME")
-    labels = [f"{r.PLAYER_NAME} ({r.team_label})" for r in matches.itertuples()]
-    choice = st.selectbox(f"{len(matches)} matches", labels, index=None, placeholder="Choose a player")
-    if choice is not None:
-        player = matches.iloc[labels.index(choice)]
+
+def back_to_list():
+    st.session_state[PLAYER_KEY] = None
+    # A fresh table key clears the old row selection, so the same row can be clicked again.
+    st.session_state.table_nonce = st.session_state.get("table_nonce", 0) + 1
 
 
 def forecast_table(rows: pd.DataFrame, show_team: bool = True, show_all_rows: bool = False):
-    """Sortable table of forecasts, highest first. Comeback players show games if healthy."""
+    """Sortable table of forecasts, highest first. Clicking a row opens that player."""
     returning = rows.missed_season == 1
     overview = rows.assign(
         played=(rows.GP.astype(str) + " of " + rows.season_games.astype(str)).where(~returning, "Missed season"),
@@ -124,8 +149,19 @@ def forecast_table(rows: pd.DataFrame, show_team: bool = True, show_all_rows: bo
         note=((rows.p_setback * 100).round().astype(int).astype(str) + "% setback chance").where(returning, ""),
     ).sort_values("forecast", ascending=False)
     cols = ["PLAYER_NAME", *(["team_label"] if show_team else []), "age", "played", "forecast", "note"]
+    key = f"table_{st.session_state.get('table_nonce', 0)}"
+
+    def open_player():
+        rows_clicked = st.session_state[key].selection.rows
+        if rows_clicked:
+            st.session_state[PLAYER_KEY] = overview.label.iloc[rows_clicked[0]]
+
+    st.caption("Click a row to see that player's forecast.")
     st.dataframe(
         overview[cols],
+        key=key,
+        on_select=open_player,
+        selection_mode="single-row",
         hide_index=True,
         width="stretch",
         height=35 * (len(overview) + 1) + 3 if show_all_rows else "auto",
@@ -219,6 +255,7 @@ def history_chart(row: pd.Series) -> alt.Chart:
 
 
 if player is not None:
+    st.button(f"← Back to {team}" if team != ALL_TEAMS else "← All players", on_click=back_to_list)
     team_now_name = player.team_now_name if pd.notna(player.team_now_name) else "No team"
     st.subheader(f"{player.PLAYER_NAME} · {team_now_name}")
     if pd.isna(player.team_now):
@@ -289,35 +326,6 @@ elif team != ALL_TEAMS:
             f"{config.SEASONS[-2]} or {current}, so rookies aren't included."
         )
 
-elif not query:
+else:
     st.markdown(f"#### All {target_season} forecasts")
     forecast_table(forecasts)
-
-with st.expander("How it works"):
-    results = pd.DataFrame(metrics["results"]).T
-    results = results.rename(columns={"mae_all": "All players", "mae_rotation": "Rotation players"})
-    st.markdown(
-        f"""
-A LightGBM model trained on NBA seasons from {config.SEASONS[0]} to {current}. It uses age, minutes,
-games missed, long absences and the last few seasons of history. Injury data isn't
-available, so long absences come from comparing each player's game log with their team's schedule.
-
-**Accuracy.** Each model was trained on {metrics['train_seasons'][0]} to {metrics['train_seasons'][1]}
-and tested on {metrics['test_seasons'][0]} to {metrics['test_seasons'][1]}, which it never saw.
-Average error in games:
-"""
-    )
-    st.dataframe(results[["All players", "Rotation players"]].astype(float).round(1), width="stretch")
-    st.caption("Rotation players: 15+ minutes per game and at least a quarter of their team's games.")
-    c = comeback_eval
-    st.markdown(
-        f"""
-**Comeback players** (returning from a missed season) get two forecasts from two extra models:
-the chance of a setback (fewer than {setback_games} games) and games if healthy. Tested on
-{c['n']} comeback seasons from {c['from_season']} on, each predicted using only earlier seasons:
-
-- Games if healthy: off by {c['mae_healthy_two_part']:.1f} games on average, vs. {c['mae_healthy_main_model']:.1f} for the main model
-- Setback chance: right more often than guessing the overall rate ({c['setback_rate']:.0%}), but only moderately
-  (AUC {c['setback_auc']:.2f}, where 0.5 is a coin flip and 1.0 is perfect)
-"""
-    )
