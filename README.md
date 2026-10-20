@@ -21,7 +21,12 @@ python -m next82.train       # evaluate models, train final models, write foreca
 streamlit run app/streamlit_app.py
 ```
 
-Link straight to a player with `?player=<name>`, e.g. `http://localhost:8501/?player=Embiid`.
+Link straight to a player or team with `?player=<name>` or `?team=<abbreviation>`,
+e.g. `http://localhost:8501/?player=Embiid` or `http://localhost:8501/?team=IND`.
+
+The team filter uses each player's current 2026-27 team from nba_api. Rosters are saved to
+`data/raw/current_rosters/` and refreshed at most once a day (`python -m next82.data --rosters`
+forces a refresh). Rookies have no NBA history, so they're listed without a forecast.
 
 ## How it works
 

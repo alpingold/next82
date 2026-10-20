@@ -13,7 +13,7 @@ import streamlit as st
 from next82 import config
 from next82.explain import GAMES, similar_comebacks, top_factors
 from next82.features import load_table
-from next82.data import load as load_raw
+from next82.data import current_rosters, load as load_raw
 from next82.train import FORECASTS_PATH, METRICS_PATH
 
 st.set_page_config(page_title="Next82", page_icon="🏀", layout="centered")
@@ -56,6 +56,12 @@ def load():
     return forecasts, history, metrics, load_table()
 
 
+@st.cache_data(ttl=3600)
+def load_rosters():
+    """Current teams. Reads the saved copy; nba_api is called at most once a day."""
+    return current_rosters()
+
+
 forecasts, history, metrics, table = load()
 if forecasts is None:
     st.error("No forecasts found. Run `python -m next82.data`, `python -m next82.features`, then `python -m next82.train`.")
@@ -67,23 +73,73 @@ mae = metrics["results"][metrics["final_model"]]["mae_all"]
 comeback_eval = metrics["comeback"]
 setback_games = config.SETBACK_GAMES
 
+# Current teams: players move in the offseason, so the team shown is their team now,
+# not their last-season team. Players on no roster are unsigned or retired.
+rosters = load_rosters()
+if rosters is not None:
+    now = rosters[["PLAYER_ID", "TEAM_ABBREVIATION", "TEAM_FULL_NAME"]].rename(
+        columns={"TEAM_ABBREVIATION": "team_now", "TEAM_FULL_NAME": "team_now_name"}
+    )
+    forecasts = forecasts.merge(now, on="PLAYER_ID", how="left")
+else:
+    forecasts = forecasts.assign(team_now=pd.NA, team_now_name=pd.NA)
+forecasts["team_label"] = forecasts.team_now.fillna("No team")
+
 st.title("Next82")
 st.caption(f"How many games will a player play in {target_season}? Forecasts are based on seasons through {current}.")
 
+ALL_TEAMS = "All teams"
+team_names = sorted(rosters.TEAM_FULL_NAME.unique()) if rosters is not None else []
+wanted = st.query_params.get("team", "")
+by_abbr = dict(zip(rosters.TEAM_ABBREVIATION, rosters.TEAM_FULL_NAME)) if rosters is not None else {}
+default_team = by_abbr.get(wanted.upper(), wanted if wanted in team_names else ALL_TEAMS)
+team = st.selectbox("Team", [ALL_TEAMS, *team_names], index=([ALL_TEAMS, *team_names]).index(default_team))
+if rosters is None:
+    st.caption("Current rosters couldn't be loaded, so the team filter is unavailable.")
+pool = forecasts if team == ALL_TEAMS else forecasts[forecasts.team_now_name == team]
+
 query = st.text_input("Search a player", value=st.query_params.get("player", ""), placeholder="e.g. Embiid, LeBron, Jokic")
-matches = forecasts[forecasts.search.str.contains(normalize(query), regex=False)] if query else forecasts.iloc[0:0]
+matches = pool[pool.search.str.contains(normalize(query), regex=False)] if query else pool.iloc[0:0]
 
 player = None
 if query and matches.empty:
-    st.warning(f"No player matching “{query}” played in {current}.")
+    where = f"on the {team}" if team != ALL_TEAMS else f"who played in {current} or {config.SEASONS[-2]}"
+    st.warning(f"No player matching “{query}” {where}.")
 elif len(matches) == 1:
     player = matches.iloc[0]
 elif len(matches) > 1:
     matches = matches.sort_values("PLAYER_NAME")
-    labels = [f"{r.PLAYER_NAME} ({r.TEAM_ABBREVIATION})" for r in matches.itertuples()]
+    labels = [f"{r.PLAYER_NAME} ({r.team_label})" for r in matches.itertuples()]
     choice = st.selectbox(f"{len(matches)} matches", labels, index=None, placeholder="Choose a player")
     if choice is not None:
         player = matches.iloc[labels.index(choice)]
+
+
+def forecast_table(rows: pd.DataFrame, show_team: bool = True, show_all_rows: bool = False):
+    """Sortable table of forecasts, highest first. Comeback players show games if healthy."""
+    returning = rows.missed_season == 1
+    overview = rows.assign(
+        played=(rows.GP.astype(str) + " of " + rows.season_games.astype(str)).where(~returning, "Missed season"),
+        forecast=rows.shown_games.round().astype(int),
+        note=((rows.p_setback * 100).round().astype(int).astype(str) + "% setback chance").where(returning, ""),
+    ).sort_values("forecast", ascending=False)
+    cols = ["PLAYER_NAME", *(["team_label"] if show_team else []), "age", "played", "forecast", "note"]
+    st.dataframe(
+        overview[cols],
+        hide_index=True,
+        width="stretch",
+        height=35 * (len(overview) + 1) + 3 if show_all_rows else "auto",
+        column_config={
+            "PLAYER_NAME": "Player",
+            "team_label": "Team",
+            "age": st.column_config.NumberColumn("Age", format="%d"),
+            "played": f"Played in {current}",
+            "forecast": st.column_config.ProgressColumn(
+                f"{target_season} forecast", min_value=0, max_value=GAMES, format="%d games"
+            ),
+            "note": "Comeback (if healthy)",
+        },
+    )
 
 
 def factor_chart(row: pd.Series) -> alt.Chart:
@@ -163,7 +219,12 @@ def history_chart(row: pd.Series) -> alt.Chart:
 
 
 if player is not None:
-    st.subheader(f"{player.PLAYER_NAME} · {player.TEAM_ABBREVIATION}")
+    team_now_name = player.team_now_name if pd.notna(player.team_now_name) else "No team"
+    st.subheader(f"{player.PLAYER_NAME} · {team_now_name}")
+    if pd.isna(player.team_now):
+        st.caption(f"Not on an NBA roster right now. Last team: {player.TEAM_ABBREVIATION} ({current}).")
+    elif player.team_now != player.TEAM_ABBREVIATION:
+        st.caption(f"Played for {player.TEAM_ABBREVIATION} in {current}.")
 
     comeback = bool(player.missed_season)
     c1, c2, c3 = st.columns(3)
@@ -218,29 +279,19 @@ if player is not None:
     st.markdown("#### Games played by season")
     st.altair_chart(history_chart(player), width="stretch")
 
+elif team != ALL_TEAMS:
+    st.markdown(f"#### {team}: {target_season} forecasts")
+    forecast_table(pool, show_team=False, show_all_rows=True)
+    no_forecast = rosters[(rosters.TEAM_FULL_NAME == team) & ~rosters.PLAYER_ID.isin(forecasts.PLAYER_ID)]
+    if len(no_forecast):
+        st.caption(
+            f"No forecast yet: {', '.join(sorted(no_forecast.PLAYER_NAME))}. Forecasts need NBA games in "
+            f"{config.SEASONS[-2]} or {current}, so rookies aren't included."
+        )
+
 elif not query:
     st.markdown(f"#### All {target_season} forecasts")
-    returning = forecasts.missed_season == 1
-    overview = forecasts.assign(
-        played=(forecasts.GP.astype(str) + " of " + forecasts.season_games.astype(str)).where(~returning, "Missed season"),
-        forecast=forecasts.shown_games.round().astype(int),
-        note=("If healthy · " + (forecasts.p_setback * 100).round().astype(int).astype(str) + "% setback chance").where(returning, ""),
-    )[["PLAYER_NAME", "TEAM_ABBREVIATION", "age", "played", "forecast", "note"]]
-    st.dataframe(
-        overview,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "PLAYER_NAME": "Player",
-            "TEAM_ABBREVIATION": "Team",
-            "age": st.column_config.NumberColumn("Age", format="%d"),
-            "played": f"Played in {current}",
-            "forecast": st.column_config.ProgressColumn(
-                f"{target_season} forecast", min_value=0, max_value=GAMES, format="%d games"
-            ),
-            "note": "Comeback",
-        },
-    )
+    forecast_table(forecasts)
 
 with st.expander("How it works"):
     results = pd.DataFrame(metrics["results"]).T

@@ -12,6 +12,11 @@ FIRST_SEASON = 1996
 LAST_SEASON = 2025
 SEASONS = [f"{y}-{str(y + 1)[-2:]}" for y in range(FIRST_SEASON, LAST_SEASON + 1)]
 
+# The season being forecast. Current rosters (who plays where now) come from this season.
+FORECAST_SEASON = f"{LAST_SEASON + 1}-{str(LAST_SEASON + 2)[-2:]}"
+# Refresh current rosters from nba_api at most this often.
+ROSTER_MAX_AGE_HOURS = 24
+
 # Most recent seasons held out for testing (time-based split).
 N_TEST_SEASONS = 2
 
