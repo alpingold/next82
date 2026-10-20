@@ -19,3 +19,8 @@ N_TEST_SEASONS = 2
 REQUEST_DELAY = 0.6
 
 RANDOM_STATE = 42
+
+# Rotation players: a meaningful role in a season. Used for reporting error and
+# for deciding who gets a comeback forecast after sitting out the latest season.
+ROTATION_MIN_MPG = 15
+ROTATION_MIN_GP_SHARE = 0.25

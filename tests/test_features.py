@@ -64,3 +64,23 @@ def test_full_missed_season_is_zero():
     df = load_table()
     row = df[(df.PLAYER_NAME == "Kevin Durant") & (df.SEASON == "2018-19")].iloc[0]
     assert row.gp_next == 0
+
+
+@needs_table
+def test_sat_out_season_row_for_known_comeback():
+    # Durant sat out 2019-20 and returned for 35 of 72 games in 2020-21.
+    df = load_table()
+    row = df[(df.PLAYER_NAME == "Kevin Durant") & (df.SEASON == "2019-20")].iloc[0]
+    assert row.missed_season == 1 and row.GP == 0
+    assert row.gp_next == 35
+
+
+@needs_table
+def test_latest_sat_out_is_forecast_only():
+    # Haliburton sat out 2025-26: he gets a forecast, but his 2024-25 row has no
+    # known target (he hasn't returned yet), so it is dropped.
+    df = load_table()
+    hali = df[df.PLAYER_NAME == "Tyrese Haliburton"].set_index("SEASON")
+    assert hali.loc["2025-26", "missed_season"] == 1
+    assert hali.loc["2025-26", "is_forecast"]
+    assert "2024-25" not in hali.index

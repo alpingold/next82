@@ -28,9 +28,10 @@ def run_evaluation(df: pd.DataFrame) -> dict:
 
     print(f"Train: {train.SEASON.min()} to {train.SEASON.max()} ({len(train):,} rows)")
     print(f"Test:  {test.SEASON.min()} to {test.SEASON.max()} ({len(test):,} rows)\n")
-    print(f"{'Model':20s} {'MAE all':>8s} {'MAE rotation':>13s}")
+    n_comeback = next(iter(results.values()))["n_comeback"]
+    print(f"{'Model':20s} {'MAE all':>8s} {'MAE rotation':>13s} {f'MAE comeback (n={n_comeback})':>22s}")
     for name, r in results.items():
-        print(f"{name:20s} {r['mae_all']:8.2f} {r['mae_rotation']:13.2f}")
+        print(f"{name:20s} {r['mae_all']:8.2f} {r['mae_rotation']:13.2f} {r['mae_comeback']:22.2f}")
 
     return {
         "train_seasons": [train.SEASON.min(), train.SEASON.max()],

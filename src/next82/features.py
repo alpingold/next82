@@ -11,6 +11,14 @@ team's schedule, split into stints (consecutive games with one team):
                These also capture late signings, releases and buyouts, so they
                are kept separate from mid-stint gaps.
 
+Sat-out seasons: when a player misses a whole season, a row is added for that
+season with 0 games played and missed_season = 1 (in-season stats are left blank).
+This lets the model learn what happens in comeback years, and lets the app
+forecast players who sat out the latest season. Rows are added when the player
+played in one of the two seasons before and either returned later (training) or
+the season is the latest one and they were a rotation player the season before
+(forecast; fringe players who sat out have most likely left the league).
+
 Target rules for a player in season s:
     played in s+1                       -> target = s+1 gp_share
     absent in s+1, returns in any later -> target = 0 (missed the whole season)
@@ -45,6 +53,7 @@ FEATURES = [
     "missed_start",
     "missed_end",
     "n_teams",
+    "missed_season",
     "gp_share_lag1",
     "gp_share_lag2",
     "missed_season_lag1",
@@ -143,6 +152,47 @@ def season_table() -> pd.DataFrame:
     return df
 
 
+def add_missed_seasons(df: pd.DataFrame) -> pd.DataFrame:
+    """Add a row for each season a player sat out entirely (rules in the module docstring)."""
+    last_idx = len(config.SEASONS) - 1
+    season_games = df.groupby("season_idx").season_games.max()
+    df = df.assign(missed_season=0)
+
+    rows = []
+    for _, g in df.sort_values("season_idx").groupby("PLAYER_ID"):
+        played = set(g.season_idx)
+        for s in range(g.season_idx.min() + 1, last_idx + 1):
+            if s in played:
+                continue
+            prev = g[g.season_idx < s].iloc[-1]
+            returned = g.season_idx.max() > s and (s - 1 in played or s - 2 in played)
+            was_rotation = prev.mpg >= config.ROTATION_MIN_MPG and prev.gp_share >= config.ROTATION_MIN_GP_SHARE
+            forecast = s == last_idx and s - 1 in played and was_rotation
+            if not (returned or forecast):
+                continue
+            years = s - prev.season_idx
+            rows.append(prev.to_dict() | {
+                "SEASON": config.SEASONS[s],
+                "season_idx": s,
+                "age": prev.age + years,
+                "years_since_draft": prev.years_since_draft + years,
+                "GP": 0,
+                "MIN": 0.0,
+                "season_games": season_games[s],
+                "gp_share": 0.0,
+                "mpg": float("nan"),
+                "min_share": 0.0,
+                "usg_pct": float("nan"),
+                "longest_gap": float("nan"),
+                "missed_start": float("nan"),
+                "missed_end": float("nan"),
+                "n_major_gaps": 1,
+                "n_teams": 0,
+                "missed_season": 1,
+            })
+    return pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+
+
 def add_history(df: pd.DataFrame) -> pd.DataFrame:
     """Lagged features from earlier seasons, matched by season (not by row)."""
     cols = ["PLAYER_ID", "season_idx", "gp_share", "mpg", "longest_gap", "missed_end"]
@@ -172,13 +222,18 @@ def add_history(df: pd.DataFrame) -> pd.DataFrame:
     ).droplevel(0)
     df["major_gaps_3yr"] = window("n_major_gaps", "sum", fill=1)
     df["avg_gp_share_3yr"] = window("gp_share", "mean", fill=0.0)
-    df["seasons_in_data"] = by_player.cumcount() + 1
+    # Seasons actually played, so sat-out rows don't count as experience.
+    df["seasons_in_data"] = by_player.missed_season.transform(lambda m: (1 - m).cumsum())
     return df
 
 
 def add_target(df: pd.DataFrame) -> pd.DataFrame:
     """Next season's gp_share, with the rules described in the module docstring."""
-    nxt = df[["PLAYER_ID", "season_idx", "gp_share", "GP", "season_games"]].copy()
+    last_idx = len(config.SEASONS) - 1
+    # A sat-out row in the latest season is only a forecast input: the player
+    # hasn't returned yet, so it can't serve as the previous season's target.
+    unconfirmed = (df.season_idx == last_idx) & (df.missed_season == 1)
+    nxt = df.loc[~unconfirmed, ["PLAYER_ID", "season_idx", "gp_share", "GP", "season_games"]].copy()
     nxt["season_idx"] -= 1
     nxt = nxt.rename(columns={"gp_share": TARGET, "GP": "gp_next", "season_games": "season_games_next"})
     df = df.merge(nxt, on=["PLAYER_ID", "season_idx"], how="left")
@@ -187,7 +242,6 @@ def add_target(df: pd.DataFrame) -> pd.DataFrame:
     missed_full = df[TARGET].isna() & (last_seen > df.season_idx + 1)
     df.loc[missed_full, [TARGET, "gp_next"]] = 0.0
 
-    last_idx = len(config.SEASONS) - 1
     df["is_forecast"] = df.season_idx == last_idx
     # Players absent next season and never seen again: can't tell why, so drop.
     keep = df.is_forecast | df[TARGET].notna()
@@ -195,7 +249,7 @@ def add_target(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build() -> pd.DataFrame:
-    df = add_target(add_history(season_table()))
+    df = add_target(add_history(add_missed_seasons(season_table())))
     id_cols = ["SEASON", "season_idx", "PLAYER_ID", "PLAYER_NAME", "TEAM_ABBREVIATION", "GP", "season_games"]
     target_cols = [TARGET, "gp_next", "season_games_next", "is_forecast"]
     return df[id_cols + FEATURES + target_cols].sort_values(["season_idx", "PLAYER_ID"]).reset_index(drop=True)
@@ -215,6 +269,7 @@ def main():
     print(f"Saved {len(df):,} rows to {OUTPUT_PATH.relative_to(config.ROOT)}")
     print(f"  with target: {n_train:,}  |  forecast rows ({config.SEASONS[-1]}): {df.is_forecast.sum():,}")
     print(f"  missed full next season (target=0): {(df.gp_next == 0).sum()}")
+    print(f"  sat-out season rows: {df.missed_season.sum()} ({(df.missed_season & df.is_forecast).sum()} to forecast)")
 
 
 if __name__ == "__main__":

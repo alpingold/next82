@@ -29,7 +29,10 @@ Link straight to a player with `?player=<name>`, e.g. `http://localhost:8501/?pl
 - **Target:** next season's games played as a share of the schedule, so the shortened
   2019-20 and 2020-21 seasons compare fairly. A player who misses the whole next season
   and returns later counts as 0. Players who never return are dropped.
-- **Features (23):** age, experience, size, games and minutes played, usage, and absences
+- **Missed seasons:** a season a player sits out entirely gets its own row (0 games), so the
+  model learns what happens in comeback years. Rotation players who sat out the latest season
+  (e.g. Tyrese Haliburton, Damian Lillard) get a comeback forecast.
+- **Features (24):** age, experience, size, games and minutes played, usage, and absences
   estimated by matching game logs to team schedules (longest absence, 10+ game absences,
   games missed at the start/end of the season), plus the last 1-3 seasons of history.
 - **Models:** "same as last year" and 3-year-average baselines, ridge regression, LightGBM.
@@ -38,14 +41,17 @@ Link straight to a player with `?player=<name>`, e.g. `http://localhost:8501/?pl
 
 ## Results (test seasons, average error in games)
 
-| Model | All players | Rotation players |
-|---|---|---|
-| Same as last year | 17.6 | 16.7 |
-| 3-year average | 17.2 | 16.2 |
-| Linear regression | 15.6 | 14.9 |
-| **LightGBM** | **15.6** | **14.7** |
+| Model | All players | Rotation players | Comeback seasons* |
+|---|---|---|---|
+| Same as last year | 17.8 | 16.8 | 15.6 |
+| 3-year average | 17.2 | 16.3 | 14.1 |
+| Linear regression | 15.7 | 15.0 | 14.2 |
+| **LightGBM** | **15.7** | **14.8** | **13.5** |
 
 Rotation players: 15+ minutes per game and at least a quarter of their team's games.
+*Comeback seasons: the season after a player sat out a whole season. There are only 31 in the
+test seasons, so this column uses all 161 comebacks from 2018-19 on, each predicted by a model
+trained only on earlier seasons.
 
 ## Layout
 

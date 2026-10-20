@@ -20,13 +20,14 @@ LABELS = {
     "weight_lb": "Weight",
     "gp_share": "Games played this season",
     "mpg": "Minutes per game",
-    "min_share": "Total minutes vs. league leader",
+    "min_share": "Total minutes this season vs. league leader",
     "usg_pct": "Usage rate",
     "longest_gap": "Longest absence this season",
     "n_major_gaps": "Absences of 10+ games this season",
     "missed_start": "Games missed at start of season",
     "missed_end": "Games missed at end of season",
     "n_teams": "Teams played for this season",
+    "missed_season": "Missed all of this season",
     "gp_share_lag1": "Games played last season",
     "gp_share_lag2": "Games played two seasons ago",
     "missed_season_lag1": "Missed all of last season",
@@ -47,7 +48,7 @@ def format_value(feature: str, value) -> str:
         return f"{value * GAMES:.0f} of {GAMES} games"
     if feature in ("longest_gap", "missed_start", "missed_end", "longest_gap_lag1", "missed_end_lag1"):
         return f"{value:.0f} games"
-    if feature in ("undrafted", "missed_season_lag1"):
+    if feature in ("undrafted", "missed_season", "missed_season_lag1"):
         return "yes" if value else "no"
     if feature in ("mpg", "mpg_lag1"):
         return f"{value:.1f}"
@@ -73,6 +74,9 @@ def top_factors(row: pd.Series, n: int = 6) -> pd.DataFrame:
     top = impact.reindex(impact.abs().sort_values(ascending=False).index[:n])
     return pd.DataFrame({
         "factor": [LABELS[f] for f in top.index],
-        "value": [format_value(f, row[f]) for f in top.index],
+        "value": [
+            "did not play" if row.get("missed_season") and pd.isna(row[f]) else format_value(f, row[f])
+            for f in top.index
+        ],
         "impact_games": top.to_numpy(),
     })
