@@ -10,33 +10,33 @@
   "final_model": "LightGBM",
   "results": {
     "Same as last year": {
-      "mae_all": 17.778947368421054,
+      "mae_all": 17.741596638655462,
       "mae_rotation": 16.818481848184817,
-      "mae_comeback": 21.724137931034484,
+      "mae_comeback": 20.322580645161292,
       "n_all": 952,
       "n_rotation": 606,
       "n_comeback": 31
     },
     "3-year average": {
-      "mae_all": 17.187192982456143,
+      "mae_all": 17.156337535014007,
       "mae_rotation": 16.336908690869087,
-      "mae_comeback": 13.091954022988507,
+      "mae_comeback": 12.408602150537638,
       "n_all": 952,
       "n_rotation": 606,
       "n_comeback": 31
     },
     "Linear regression": {
-      "mae_all": 15.545441709567788,
+      "mae_all": 15.53542589082283,
       "mae_rotation": 14.868872770044717,
-      "mae_comeback": 13.374418721508492,
+      "mae_comeback": 13.206902157989775,
       "n_all": 952,
       "n_rotation": 606,
       "n_comeback": 31
     },
     "LightGBM": {
-      "mae_all": 15.61206783203998,
+      "mae_all": 15.586980241155677,
       "mae_rotation": 14.698923086112096,
-      "mae_comeback": 14.316565102377748,
+      "mae_comeback": 13.629714100360584,
       "n_all": 952,
       "n_rotation": 606,
       "n_comeback": 31

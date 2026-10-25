@@ -84,3 +84,11 @@ def test_latest_sat_out_is_forecast_only():
     assert hali.loc["2025-26", "missed_season"] == 1
     assert hali.loc["2025-26", "is_forecast"]
     assert "2024-25" not in hali.index
+
+
+@needs_table
+def test_every_target_has_a_season_length():
+    # Error in games is scaled by the next season's length; a missing length would
+    # silently drop the row from accuracy numbers.
+    df = load_table()
+    assert df.loc[~df.is_forecast, "season_games_next"].notna().all()

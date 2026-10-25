@@ -265,6 +265,10 @@ def add_target(df: pd.DataFrame) -> pd.DataFrame:
     last_seen = df.groupby("PLAYER_ID").season_idx.transform("max")
     missed_full = df[TARGET].isna() & (last_seen > df.season_idx + 1)
     df.loc[missed_full, [TARGET, "gp_next"]] = 0.0
+    # Their next season has no row of its own, so fill in its length from the
+    # schedule; error in games is scaled by it.
+    season_length = df.groupby("season_idx").season_games.max()
+    df.loc[missed_full, "season_games_next"] = (df.loc[missed_full, "season_idx"] + 1).map(season_length)
 
     df["is_forecast"] = df.season_idx == last_idx
     # Players absent next season and never seen again: can't tell why, so drop.
