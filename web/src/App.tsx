@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router'
 import SearchBox from './components/SearchBox'
-import { latestFinishedSeason, shortDate, useIndex } from './data'
+import { baselineText, latestFinishedSeason, shortDate, useIndex } from './data'
 import Home from './pages/Home'
 
 // The player page carries the chart library, so it loads only when first opened.
@@ -90,8 +90,9 @@ function Footer({ index }: { index: Index }) {
         </p>
         <p>
           Forecasts were made before the {meta.forecastSeason} season and stay fixed, so they can be checked against what
-          actually happens. Tested on {meta.accuracy.testSeasons.join(' and ')}: off by {meta.accuracy.modelMae} games on average, vs.{' '}
-          {meta.accuracy.bestBaselineMae} for the best simple guess ({meta.accuracy.bestBaseline.toLowerCase()}).
+          actually happens. Tested on {meta.accuracy.testSeasons.join(' and ')}, seasons the model never saw: our average miss
+          was {meta.accuracy.modelMae} games (half within {Math.round(meta.accuracy.modelMedianError)}), vs.{' '}
+          {meta.accuracy.bestBaselineMae} {baselineText(meta.accuracy.bestBaseline)}.
         </p>
       </div>
     </footer>

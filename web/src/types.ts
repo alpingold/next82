@@ -2,6 +2,9 @@
 
 export interface Accuracy {
   modelMae: number
+  /** Half of forecasts miss by less than this many games. */
+  modelMedianError: number
+  shareWithin16: number
   bestBaseline: string
   bestBaselineMae: number
   comebackHealthyMae: number

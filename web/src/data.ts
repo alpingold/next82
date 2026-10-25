@@ -61,6 +61,11 @@ export function latestFinishedSeason(today = new Date()): string {
   return `${start}-${String(start + 1).slice(-2)}`
 }
 
+/** How each simple-guess baseline is described to readers. */
+export function baselineText(name: string): string {
+  return name === 'Same as last year' ? "guessing last season's total" : "guessing each player's 3-season average"
+}
+
 export function shortDate(iso: string): string {
   return new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }

@@ -181,6 +181,8 @@ def main():
             "setbackGames": config.SETBACK_GAMES,
             "accuracy": {
                 "modelMae": round(model_mae, 1),
+                "modelMedianError": round(results[metrics["final_model"]]["median_error_all"], 1),
+                "shareWithin16": round(results[metrics["final_model"]]["share_within_16"], 2),
                 "bestBaseline": best_baseline,
                 "bestBaselineMae": round(results[best_baseline]["mae_all"], 1),
                 "comebackHealthyMae": round(metrics["comeback"]["mae_healthy_two_part"], 1),

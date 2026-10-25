@@ -83,8 +83,9 @@ export default function Player({ meta }: { meta: Meta }) {
         </p>
       ) : (
         <p className="mt-4 text-sm text-faint">
-          Out of 82 games, made before the season started and kept fixed. Forecasts are off by about{' '}
-          {Math.round(meta.accuracy.modelMae)} games on average — treat it as a range, not an exact count.
+          Out of 82 games, made before the season started and kept fixed. Our average miss is{' '}
+          {meta.accuracy.modelMae} games, and half our forecasts land within{' '}
+          {Math.round(meta.accuracy.modelMedianError)} — treat it as a range, not an exact count.
         </p>
       )}
 

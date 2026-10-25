@@ -18,16 +18,24 @@ def is_rotation(df: pd.DataFrame) -> pd.Series:
     return (df.mpg >= config.ROTATION_MIN_MPG) & (df.gp_share >= config.ROTATION_MIN_GP_SHARE)
 
 
+def errors_games(df: pd.DataFrame, pred_share: np.ndarray) -> np.ndarray:
+    """Absolute error in games for each row, scaled to each target season's length."""
+    return (np.abs(pred_share - df[TARGET]) * df.season_games_next).to_numpy()
+
+
 def mae_games(df: pd.DataFrame, pred_share: np.ndarray) -> float:
-    """Mean absolute error in games, scaled to each target season's length."""
-    return float(np.mean(np.abs(pred_share - df[TARGET]) * df.season_games_next))
+    """Mean absolute error in games."""
+    return float(np.mean(errors_games(df, pred_share)))
 
 
 def score(df: pd.DataFrame, pred_share: np.ndarray) -> dict:
     rot = is_rotation(df).to_numpy()
     comeback = (df.missed_season == 1).to_numpy()
+    errors = errors_games(df, pred_share)
     return {
-        "mae_all": mae_games(df, pred_share),
+        "mae_all": float(errors.mean()),
+        "median_error_all": float(np.median(errors)),
+        "share_within_16": float((errors <= 16).mean()),
         "mae_rotation": mae_games(df[rot], pred_share[rot]),
         "mae_comeback": mae_games(df[comeback], pred_share[comeback]) if comeback.any() else None,
         "n_all": len(df),

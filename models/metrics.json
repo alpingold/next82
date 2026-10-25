@@ -11,6 +11,8 @@
   "results": {
     "Same as last year": {
       "mae_all": 17.741596638655462,
+      "median_error_all": 13.999999999999996,
+      "share_within_16": 0.5703781512605042,
       "mae_rotation": 16.818481848184817,
       "mae_comeback": 20.322580645161292,
       "n_all": 952,
@@ -19,6 +21,8 @@
     },
     "3-year average": {
       "mae_all": 17.156337535014007,
+      "median_error_all": 13.000000000000002,
+      "share_within_16": 0.5640756302521008,
       "mae_rotation": 16.336908690869087,
       "mae_comeback": 12.408602150537638,
       "n_all": 952,
@@ -27,6 +31,8 @@
     },
     "Linear regression": {
       "mae_all": 15.53542589082283,
+      "median_error_all": 12.944336967574902,
+      "share_within_16": 0.6039915966386554,
       "mae_rotation": 14.868872770044717,
       "mae_comeback": 13.206902157989775,
       "n_all": 952,
@@ -35,6 +41,8 @@
     },
     "LightGBM": {
       "mae_all": 15.586980241155677,
+      "median_error_all": 11.306618449816346,
+      "share_within_16": 0.6271008403361344,
       "mae_rotation": 14.698923086112096,
       "mae_comeback": 13.629714100360584,
       "n_all": 952,

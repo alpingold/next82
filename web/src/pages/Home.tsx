@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router'
 import Leaderboard from '../components/Leaderboard'
 import SearchBox from '../components/SearchBox'
-import { shortDate } from '../data'
+import { baselineText, shortDate } from '../data'
 import type { Index } from '../types'
 
 export default function Home({ index }: { index: Index }) {
@@ -34,10 +34,20 @@ export default function Home({ index }: { index: Index }) {
         <div className="mt-8 max-w-2xl">
           <SearchBox players={players} autoFocus />
         </div>
-        <dl className="mt-8 grid max-w-2xl grid-cols-3 gap-px overflow-hidden rounded-xl border border-line bg-line text-center">
+        <dl className="mt-8 grid max-w-2xl gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-3">
           <Stat value={players.length.toString()} label="players forecast" />
-          <Stat value={meta.accuracy.modelMae.toFixed(1)} label="games avg. error" />
-          <Stat value={meta.accuracy.bestBaselineMae.toFixed(1)} label="for the best simple guess" />
+          <Stat
+            value={meta.accuracy.modelMae.toFixed(1)}
+            unit="games"
+            label="our average miss"
+            note={`Half our forecasts land within ${Math.round(meta.accuracy.modelMedianError)} games`}
+            accent
+          />
+          <Stat
+            value={meta.accuracy.bestBaselineMae.toFixed(1)}
+            unit="games"
+            label={`average miss ${baselineText(meta.accuracy.bestBaseline)}`}
+          />
         </dl>
       </section>
 
@@ -79,11 +89,15 @@ export default function Home({ index }: { index: Index }) {
   )
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+function Stat({ value, unit, label, note, accent = false }: { value: string; unit?: string; label: string; note?: string; accent?: boolean }) {
   return (
-    <div className="bg-surface px-3 py-4">
-      <dd className="tabular font-display text-3xl font-bold">{value}</dd>
-      <dt className="mt-0.5 text-xs text-muted">{label}</dt>
+    <div className="flex flex-col bg-surface px-4 py-4">
+      <dd className="flex items-baseline gap-1.5">
+        <span className={`tabular font-display text-3xl font-bold ${accent ? 'text-accent' : ''}`}>{value}</span>
+        {unit && <span className="text-sm text-muted">{unit}</span>}
+      </dd>
+      <dt className="order-last mt-0.5 text-sm text-ink">{label}</dt>
+      {note && <dd className="order-last mt-1 text-xs text-faint">{note}</dd>}
     </div>
   )
 }
