@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router'
 import SearchBox from './components/SearchBox'
 import { baselineText, latestFinishedSeason, shortDate, useIndex } from './data'
+import About from './pages/About'
 import Home from './pages/Home'
 
 // The player page carries the chart library, so it loads only when first opened.
@@ -10,7 +11,7 @@ import type { Index } from './types'
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Shell />
     </BrowserRouter>
   )
@@ -30,11 +31,19 @@ function Shell() {
           <Link to="/" className="font-display text-2xl font-extrabold tracking-tight uppercase">
             Next<span className="text-accent">82</span>
           </Link>
-          {index && pathname !== '/' && (
-            <div className="ml-auto w-full max-w-xs">
-              <SearchBox players={index.players} size="compact" />
-            </div>
-          )}
+          <nav className="ml-auto flex items-center gap-4">
+            {index && pathname !== '/' && (
+              <div className="w-40 sm:w-64">
+                <SearchBox players={index.players} size="compact" />
+              </div>
+            )}
+            <Link
+              to="/about"
+              className={`text-sm font-medium transition hover:text-ink ${pathname === '/about' ? 'text-ink' : 'text-muted'}`}
+            >
+              About
+            </Link>
+          </nav>
         </div>
       </header>
 
@@ -54,6 +63,7 @@ function Shell() {
                   </Suspense>
                 }
               />
+              <Route path="/about" element={<About meta={index.meta} />} />
               <Route path="*" element={<p className="py-16 text-muted">Page not found.</p>} />
             </Routes>
           </>

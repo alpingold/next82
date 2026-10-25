@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import type { Index, PlayerDetail, PlayerSummary } from './types'
 
+/** Where the site is served from: "/" locally, "/next82/" on GitHub Pages. */
+const BASE = import.meta.env.BASE_URL
+
 let indexPromise: Promise<Index> | null = null
 
 /** The index (meta, teams, player summaries), fetched once and shared. */
 export function useIndex(): Index | null {
   const [index, setIndex] = useState<Index | null>(null)
   useEffect(() => {
-    indexPromise ??= fetch('/data/index.json').then((r) => r.json())
+    indexPromise ??= fetch(`${BASE}data/index.json`).then((r) => r.json())
     indexPromise.then(setIndex)
   }, [])
   return index
@@ -20,7 +23,7 @@ export function usePlayer(id: number): PlayerDetail | null | undefined {
   const [loaded, setLoaded] = useState<{ id: number; player: PlayerDetail | null } | null>(null)
   useEffect(() => {
     let current = true
-    fetch(`/data/players/${id}.json`)
+    fetch(`${BASE}data/players/${id}.json`)
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null)
       .then((player) => current && setLoaded({ id, player }))

@@ -1,5 +1,7 @@
 # Next82
 
+**Live site: https://rarunach03.github.io/next82/**
+
 Forecasts how many games an NBA player will play next season and explains what drives each prediction.
 
 ## Setup
@@ -24,6 +26,12 @@ cd web && npm install && npm run dev
 ```
 
 `npm run build` writes the deployable site to `web/dist/`.
+
+**Deployment.** GitHub Actions publishes the site to GitHub Pages on every push to `main`
+(`.github/workflows/deploy-pages.yml`). Every morning, `refresh-data.yml` updates current
+rosters and games so far, re-exports the site data, commits it if anything changed, and
+redeploys. stats.nba.com sometimes blocks requests from cloud servers; if the refresh fails,
+run `python -m next82.data --current && python -m next82.export` locally and push.
 
 ## Streamlit app (internal)
 

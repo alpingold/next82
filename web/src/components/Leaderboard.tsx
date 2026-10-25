@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import { playedText, soFarText } from '../data'
 import type { PlayerSummary } from '../types'
 
@@ -48,13 +48,13 @@ export default function Leaderboard({
             >
               <td className="tabular py-3 pl-4 text-faint">{i + 1}</td>
               <td className="py-3 pr-3">
-                <a
-                  href={`/player/${p.id}`}
-                  onClick={(e) => e.preventDefault()}
+                <Link
+                  to={`/player/${p.id}`}
+                  onClick={(e) => e.stopPropagation()}
                   className="font-medium text-ink outline-none focus-visible:underline"
                 >
                   {p.name}
-                </a>
+                </Link>
                 {showTeam && <span className="ml-2 text-xs text-faint">{p.team ?? 'No team'}</span>}
               </td>
               <td className="tabular hidden py-3 pr-3 text-muted sm:table-cell">{p.age}</td>
