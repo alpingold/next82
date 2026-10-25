@@ -37,9 +37,9 @@ jobs:
       - run: npm run build
         env:
           BASE_PATH: /next82/
-      # GitHub Pages has no route rewrites: serving the app for unknown paths lets
-      # links like /next82/player/123 load directly.
-      - run: cp dist/index.html dist/404.html
+      # A real page for every route (about, each player) so direct links load
+      # with a 200 status; 404.html covers anything else.
+      - run: node scripts/static-routes.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web/dist
