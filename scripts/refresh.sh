@@ -4,6 +4,8 @@
 # Runs on a home computer because stats.nba.com doesn't respond to cloud servers.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+echo "== $(date) =="
+git pull --rebase --quiet
 
 ./.venv/bin/python -m next82.data --current
 ./.venv/bin/python -m next82.export
