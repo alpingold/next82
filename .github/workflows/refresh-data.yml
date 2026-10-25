@@ -1,11 +1,12 @@
 name: refresh data
 
-# Every morning, after the night's games: refresh current rosters and games played
-# so far, re-export the website data, commit it if anything changed, and redeploy.
-# The forecasts themselves stay fixed during the season.
+# Refresh current rosters and games played so far, re-export the website data,
+# commit it if anything changed, and redeploy. The forecasts stay fixed.
+#
+# Manual only: stats.nba.com doesn't respond to GitHub's servers (requests time
+# out), so the daily refresh runs on a home computer instead (scripts/refresh.sh).
+# This is kept for trying again from the Actions tab.
 on:
-  schedule:
-    - cron: "0 11 * * *" # 11:00 UTC = 7am US Eastern
   workflow_dispatch:
 
 permissions:
