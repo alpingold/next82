@@ -1,0 +1,100 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router'
+import { playedText } from '../data'
+import type { PlayerSummary } from '../types'
+
+const PAGE = 50
+
+/**
+ * Forecasts, highest first. Comeback players show their if-healthy number with a
+ * dashed bar and their setback chance, so they aren't mistaken for regular forecasts.
+ */
+export default function Leaderboard({
+  players,
+  dataThrough,
+  showTeam = true,
+}: {
+  players: PlayerSummary[]
+  dataThrough: string
+  showTeam?: boolean
+}) {
+  const navigate = useNavigate()
+  const [shown, setShown] = useState(PAGE)
+  const rows = players.slice(0, shown)
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-line text-left text-xs tracking-wide text-faint uppercase">
+            <th className="w-10 py-3 pl-4 font-medium">#</th>
+            <th className="py-3 pr-3 font-medium">Player</th>
+            <th className="hidden py-3 pr-3 font-medium sm:table-cell">Age</th>
+            <th className="hidden py-3 pr-3 font-medium md:table-cell">Played {dataThrough}</th>
+            <th className="py-3 pr-4 font-medium">Forecast</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p, i) => (
+            <tr
+              key={p.id}
+              onClick={() => navigate(`/player/${p.id}`)}
+              className="cursor-pointer border-b border-line/60 transition last:border-0 hover:bg-surface-2"
+            >
+              <td className="tabular py-3 pl-4 text-faint">{i + 1}</td>
+              <td className="py-3 pr-3">
+                <a
+                  href={`/player/${p.id}`}
+                  onClick={(e) => e.preventDefault()}
+                  className="font-medium text-ink outline-none focus-visible:underline"
+                >
+                  {p.name}
+                </a>
+                {showTeam && <span className="ml-2 text-xs text-faint">{p.team ?? 'No team'}</span>}
+              </td>
+              <td className="tabular hidden py-3 pr-3 text-muted sm:table-cell">{p.age}</td>
+              <td className="tabular hidden py-3 pr-3 text-muted md:table-cell">
+                {p.comeback ? 'Missed season' : playedText(p.games, p.seasonGames)}
+              </td>
+              <td className="py-3 pr-4">
+                <ForecastCell player={p} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {players.length > shown && (
+        <button
+          onClick={() => setShown(players.length)}
+          className="w-full border-t border-line py-3 text-sm font-medium text-muted transition hover:bg-surface-2 hover:text-ink"
+        >
+          Show all {players.length} players
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ForecastCell({ player: p }: { player: PlayerSummary }) {
+  const pct = `${(p.shown / 82) * 100}%`
+  return (
+    <div className="flex items-center gap-3">
+      <div className="relative hidden h-2 w-24 shrink-0 rounded-full bg-surface-2 sm:block">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full ${p.comeback ? 'border border-dashed border-accent bg-accent/15' : 'bg-accent'}`}
+          style={{ width: pct }}
+        />
+      </div>
+      <span className="tabular whitespace-nowrap">
+        <span className="font-display text-lg font-bold">{Math.round(p.shown)}</span>
+        {p.comeback ? (
+          <span className="ml-1.5 text-xs text-muted">
+            if healthy · <span className="text-ink">{Math.round((p.setbackChance ?? 0) * 100)}%</span> setback
+          </span>
+        ) : (
+          <span className="ml-1 text-xs text-faint">games</span>
+        )}
+      </span>
+    </div>
+  )
+}

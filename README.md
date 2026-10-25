@@ -12,9 +12,23 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-## Run the app
+## Website
 
-The files the app needs are committed, so after setup it runs straight away:
+The main front end is a static React site in `web/` (Vite, TypeScript, Tailwind, Recharts).
+It reads JSON exported from the forecasts, so it needs no backend and hosts free on Vercel
+(`web/vercel.json` handles page routes).
+
+```bash
+python -m next82.export      # write web/public/data/ from the committed app files
+cd web && npm install && npm run dev
+```
+
+`npm run build` writes the deployable site to `web/dist/`.
+
+## Streamlit app (internal)
+
+The original Streamlit app still works and is handy for checking the model. The files it
+needs are committed, so after setup it runs straight away:
 
 ```bash
 streamlit run app/streamlit_app.py
@@ -34,6 +48,7 @@ them by hand. Rookies have no NBA history, so they're listed without a forecast.
 python -m next82.data        # download raw data from nba_api (~6 min, skips files already present)
 python -m next82.features    # build data/processed/player_seasons.parquet
 python -m next82.train       # evaluate models, train final models, write the app files (~1 min)
+python -m next82.export      # export JSON for the website
 ```
 
 The latest season moves forward automatically: a season counts as finished from May 1, so
@@ -105,7 +120,9 @@ src/next82/
   evaluate.py      time-based split, MAE in games
   explain.py       SHAP factors with readable labels
   train.py         evaluation + final models + forecasts
-app/               Streamlit app
+  export.py        JSON for the website
+web/               React website (src/), exported data (public/data/, committed)
+app/               Streamlit app (internal)
 .streamlit/        app theme
 .github/workflows/ runs the tests on every push
 tests/             app tests run on the committed files; data tests skip without the full data
