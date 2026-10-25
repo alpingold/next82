@@ -79,8 +79,10 @@ def main():
     so_far = data.saved_season_to_date(target)
 
     if rosters is not None:
-        now = rosters.set_index("PLAYER_ID")[["TEAM_ABBREVIATION", "TEAM_FULL_NAME"]]
-        forecasts = forecasts.join(now, on="PLAYER_ID", rsuffix="_NOW")
+        now = rosters[["PLAYER_ID", "TEAM_ABBREVIATION", "TEAM_FULL_NAME"]].rename(
+            columns={"TEAM_ABBREVIATION": "TEAM_ABBREVIATION_NOW"}
+        )
+        forecasts = forecasts.merge(now, on="PLAYER_ID", how="left")
     else:
         forecasts["TEAM_ABBREVIATION_NOW"] = None
         forecasts["TEAM_FULL_NAME"] = None
