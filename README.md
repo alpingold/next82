@@ -38,9 +38,20 @@ Link straight to a player or team with `?player=<name>` or `?team=<abbreviation>
 e.g. `http://localhost:8501/?player=Embiid` or `http://localhost:8501/?team=IND`.
 
 Teams are each player's current team from nba_api, saved in `data/raw/current_rosters/`.
-When the saved rosters are over a day old, the app refreshes them in the background, so a
-slow or blocked nba_api never holds up a page. `python -m next82.data --rosters` refreshes
-them by hand. Rookies have no NBA history, so they're listed without a forecast.
+When the saved rosters are over a day old, the Streamlit app refreshes them in the background,
+so a slow or blocked nba_api never holds up a page. Rookies have no NBA history, so they're
+listed without a forecast.
+
+### During the season
+
+Forecasts are made before the season starts and stay fixed, so they can be checked against
+what actually happens. Once the season is underway, the website also shows each player's
+games played so far (finished games only). To update rosters and games so far, then the site:
+
+```bash
+python -m next82.data --current
+python -m next82.export
+```
 
 ## Rebuild the forecasts
 

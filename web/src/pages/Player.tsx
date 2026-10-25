@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router'
 import FactorChart from '../components/FactorChart'
 import HistoryChart from '../components/HistoryChart'
-import { playedText, usePlayer } from '../data'
+import { playedText, shortDate, soFarText, usePlayer } from '../data'
 import type { Meta } from '../types'
 
 export default function Player({ meta }: { meta: Meta }) {
@@ -20,6 +20,7 @@ export default function Player({ meta }: { meta: Meta }) {
     )
 
   const team = p.teamName ?? 'Not on an NBA roster'
+  const soFar = meta.seasonStarted ? soFarText(p) : null
   const change = Math.round(p.forecast - (p.games / p.seasonGames) * 82)
   return (
     <article className="pt-8 pb-16">
@@ -36,38 +37,54 @@ export default function Player({ meta }: { meta: Meta }) {
         </p>
       </header>
 
-      {p.comeback ? (
-        <section className="mt-8 grid gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-2">
-          <BigStat value={Math.round(p.ifHealthy ?? 0)} unit="games" label={`${meta.forecastSeason} forecast if healthy`} accent />
+      <section className={`mt-8 grid gap-px overflow-hidden rounded-2xl border border-line bg-line ${soFar ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+        {p.comeback ? (
+          <>
+            <BigStat value={Math.round(p.ifHealthy ?? 0)} unit="games" label={`${meta.forecastSeason} forecast if healthy`} accent />
+            <BigStat
+              value={Math.round((p.setbackChance ?? 0) * 100)}
+              unit="%"
+              label={`Chance of a setback (fewer than ${meta.setbackGames} games)`}
+            />
+          </>
+        ) : (
+          <>
+            <BigStat
+              value={Math.round(p.forecast)}
+              unit="games"
+              label={`${meta.forecastSeason} forecast`}
+              note={`${change >= 0 ? '+' : '−'}${Math.abs(change)} vs. ${meta.dataThrough}`}
+              accent
+            />
+            <BigStat
+              value={p.games}
+              unit={`of ${p.seasonGames}`}
+              label={`Played in ${meta.dataThrough}`}
+              note={p.games > p.seasonGames ? 'traded mid-season' : undefined}
+            />
+          </>
+        )}
+        {soFar && (
           <BigStat
-            value={Math.round((p.setbackChance ?? 0) * 100)}
-            unit="%"
-            label={`Chance of a setback (fewer than ${meta.setbackGames} games)`}
+            value={p.playedSoFar ?? 0}
+            unit={`of ${p.teamGamesSoFar}`}
+            label={`Played so far in ${meta.forecastSeason}`}
+            note={meta.soFarThrough ? `Through ${shortDate(meta.soFarThrough)}` : undefined}
           />
-        </section>
-      ) : (
-        <section className="mt-8 grid gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-2">
-          <BigStat
-            value={Math.round(p.forecast)}
-            unit="games"
-            label={`${meta.forecastSeason} forecast`}
-            note={`${change >= 0 ? '+' : '−'}${Math.abs(change)} vs. ${meta.dataThrough}`}
-            accent
-          />
-          <BigStat value={p.games} unit={`of ${p.seasonGames}`} label={`Played in ${meta.dataThrough}`} note={p.games > p.seasonGames ? 'traded mid-season' : undefined} />
-        </section>
-      )}
+        )}
+      </section>
 
       {p.comeback ? (
         <p className="mt-4 rounded-xl border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-ink">
           {p.name} didn't play in {meta.dataThrough}. Players returning from a missed season tend to either play a lot or
           barely play, so this shows two numbers instead of one. If healthy, past comeback forecasts were off by about{' '}
-          {Math.round(meta.accuracy.comebackHealthyMae)} games on average.
+          {Math.round(meta.accuracy.comebackHealthyMae)} games on average. Forecasts were made before the season
+          started and stay fixed.
         </p>
       ) : (
         <p className="mt-4 text-sm text-faint">
-          Out of 82 games. Forecasts are off by about {Math.round(meta.accuracy.modelMae)} games on average — treat it as
-          a range, not an exact count.
+          Out of 82 games, made before the season started and kept fixed. Forecasts are off by about{' '}
+          {Math.round(meta.accuracy.modelMae)} games on average — treat it as a range, not an exact count.
         </p>
       )}
 

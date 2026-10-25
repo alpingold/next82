@@ -76,6 +76,7 @@ def main():
     target = next_season(current)
     seasons = sorted(history.SEASON.unique())
     rosters = data.saved_rosters(target)
+    so_far = data.saved_season_to_date(target)
 
     if rosters is not None:
         now = rosters.set_index("PLAYER_ID")[["TEAM_ABBREVIATION", "TEAM_FULL_NAME"]]
@@ -83,6 +84,25 @@ def main():
     else:
         forecasts["TEAM_ABBREVIATION_NOW"] = None
         forecasts["TEAM_FULL_NAME"] = None
+
+    # Games played so far this season (the forecasts were made before it started).
+    if so_far is not None:
+        played, team_games = so_far
+        forecasts = forecasts.merge(played[["PLAYER_ID", "GP"]].rename(columns={"GP": "played_so_far"}), on="PLAYER_ID", how="left")
+        forecasts["played_so_far"] = forecasts.played_so_far.fillna(0)
+        team_so_far = dict(zip(team_games.TEAM_ABBREVIATION, team_games.GAMES))
+        forecasts["team_games_so_far"] = forecasts.TEAM_ABBREVIATION_NOW.map(team_so_far)
+        if not forecasts.TEAM_ABBREVIATION_NOW.isna().all():
+            # Teams that haven't played yet have 0 games, not missing.
+            forecasts.loc[forecasts.TEAM_ABBREVIATION_NOW.notna(), "team_games_so_far"] = (
+                forecasts.loc[forecasts.TEAM_ABBREVIATION_NOW.notna(), "team_games_so_far"].fillna(0)
+            )
+        season_started = not team_games.empty
+        so_far_through = team_games.LAST_GAME.iloc[0] if season_started else None
+    else:
+        forecasts["played_so_far"] = None
+        forecasts["team_games_so_far"] = None
+        season_started, so_far_through = False, None
 
     comeback = forecasts.missed_season == 1
     forecasts["shown"] = forecasts.games_if_healthy.where(comeback, forecasts.pred_games)
@@ -111,6 +131,8 @@ def main():
             "setbackChance": round_or_none(r.p_setback, 3) if is_comeback else None,
             "shown": round_or_none(r.shown),
             "recentMinutes": round(float(r.recent_minutes)),
+            "playedSoFar": None if pd.isna(r.played_so_far) else int(r.played_so_far),
+            "teamGamesSoFar": None if pd.isna(r.team_games_so_far) else int(r.team_games_so_far),
         }
         players.append(summary)
 
@@ -152,6 +174,8 @@ def main():
             "previousSeason": seasons[-2],
             "latestFinishedSeason": config.SEASONS[-1],
             "rostersAsOf": rosters.FETCHED_AT.iloc[0].isoformat() if rosters is not None else None,
+            "seasonStarted": season_started,
+            "soFarThrough": str(so_far_through)[:10] if so_far_through is not None else None,
             "generatedAt": datetime.now().isoformat(timespec="seconds"),
             "games": GAMES,
             "setbackGames": config.SETBACK_GAMES,

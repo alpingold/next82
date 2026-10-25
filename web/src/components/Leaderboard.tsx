@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { playedText } from '../data'
+import { playedText, soFarText } from '../data'
 import type { PlayerSummary } from '../types'
 
 const PAGE = 50
@@ -12,10 +12,14 @@ const PAGE = 50
 export default function Leaderboard({
   players,
   dataThrough,
+  forecastSeason,
+  seasonStarted,
   showTeam = true,
 }: {
   players: PlayerSummary[]
   dataThrough: string
+  forecastSeason: string
+  seasonStarted: boolean
   showTeam?: boolean
 }) {
   const navigate = useNavigate()
@@ -31,6 +35,7 @@ export default function Leaderboard({
             <th className="py-3 pr-3 font-medium">Player</th>
             <th className="hidden py-3 pr-3 font-medium sm:table-cell">Age</th>
             <th className="hidden py-3 pr-3 font-medium md:table-cell">Played {dataThrough}</th>
+            {seasonStarted && <th className="hidden py-3 pr-3 font-medium lg:table-cell">{forecastSeason} so far</th>}
             <th className="py-3 pr-4 font-medium">Forecast</th>
           </tr>
         </thead>
@@ -56,6 +61,9 @@ export default function Leaderboard({
               <td className="tabular hidden py-3 pr-3 text-muted md:table-cell">
                 {p.comeback ? 'Missed season' : playedText(p.games, p.seasonGames)}
               </td>
+              {seasonStarted && (
+                <td className="tabular hidden py-3 pr-3 text-muted lg:table-cell">{soFarText(p) ?? '—'}</td>
+              )}
               <td className="py-3 pr-4">
                 <ForecastCell player={p} />
               </td>

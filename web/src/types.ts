@@ -14,6 +14,10 @@ export interface Meta {
   previousSeason: string
   latestFinishedSeason: string
   rostersAsOf: string | null
+  /** The forecast season is underway (games so far are available). */
+  seasonStarted: boolean
+  /** Date of the latest game counted in "so far" numbers. */
+  soFarThrough: string | null
   generatedAt: string
   games: number
   setbackGames: number
@@ -47,6 +51,9 @@ export interface PlayerSummary {
   shown: number
   /** Minutes in the last season played; used to rank search suggestions. */
   recentMinutes: number
+  /** Games played so far this season, and the player's current team's games so far. */
+  playedSoFar: number | null
+  teamGamesSoFar: number | null
 }
 
 export interface Factor {

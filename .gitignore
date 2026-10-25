@@ -21,3 +21,6 @@ models/*
 !data/raw/current_rosters/
 data/raw/current_rosters/*
 !data/raw/current_rosters/*.parquet
+!data/raw/current_season/
+data/raw/current_season/*
+!data/raw/current_season/*.parquet

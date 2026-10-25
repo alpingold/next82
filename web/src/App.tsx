@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router'
 import SearchBox from './components/SearchBox'
-import { latestFinishedSeason, useIndex } from './data'
+import { latestFinishedSeason, shortDate, useIndex } from './data'
 import Home from './pages/Home'
 
 // The player page carries the chart library, so it loads only when first opened.
@@ -84,10 +84,13 @@ function Footer({ index }: { index: Index }) {
       <div className="mx-auto max-w-4xl space-y-1 px-4 py-6 text-xs text-faint sm:px-6">
         <p>
           Forecasts use NBA regular seasons from 1996-97 through {meta.dataThrough}
-          {rosters && <> · Teams as of {rosters}</>}. Data from stats.nba.com via nba_api.
+          {rosters && <> · Teams as of {rosters}</>}
+          {meta.seasonStarted && meta.soFarThrough && <> · {meta.forecastSeason} games through {shortDate(meta.soFarThrough)}</>}.
+          Data from stats.nba.com via nba_api.
         </p>
         <p>
-          Tested on {meta.accuracy.testSeasons.join(' and ')}: off by {meta.accuracy.modelMae} games on average, vs.{' '}
+          Forecasts were made before the {meta.forecastSeason} season and stay fixed, so they can be checked against what
+          actually happens. Tested on {meta.accuracy.testSeasons.join(' and ')}: off by {meta.accuracy.modelMae} games on average, vs.{' '}
           {meta.accuracy.bestBaselineMae} for the best simple guess ({meta.accuracy.bestBaseline.toLowerCase()}).
         </p>
       </div>

@@ -9,7 +9,7 @@ Usage:
     python -m next82.data                    # all seasons in config.SEASONS
     python -m next82.data --seasons 2024-25  # specific seasons
     python -m next82.data --force            # re-download existing files
-    python -m next82.data --rosters          # refresh current rosters only
+    python -m next82.data --current          # refresh current rosters and games so far only
 """
 import argparse
 import threading
@@ -145,6 +145,50 @@ def fetch_current_rosters(season: str = config.FORECAST_SEASON) -> pd.DataFrame:
     return out
 
 
+def season_to_date_paths(season: str = config.FORECAST_SEASON):
+    folder = config.RAW_DIR / "current_season"
+    return folder / f"players_{season}.parquet", folder / f"teams_{season}.parquet"
+
+
+def fetch_season_to_date(season: str = config.FORECAST_SEASON) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Games played so far in the season being forecast: per player, and per team.
+
+    The forecasts were made before the season and stay fixed; these numbers let the
+    website show how each player is tracking against their forecast.
+    """
+    players = leaguedashplayerstats.LeagueDashPlayerStats(
+        season=season, season_type_all_star=SEASON_TYPE, per_mode_detailed="Totals", timeout=TIMEOUT
+    ).get_data_frames()[0]
+    time.sleep(config.REQUEST_DELAY)
+    team_games = leaguegamelog.LeagueGameLog(
+        season=season, season_type_all_star=SEASON_TYPE, player_or_team_abbreviation="T", timeout=TIMEOUT
+    ).get_data_frames()[0]
+
+    # Count only finished games (with a result): the log also lists games in progress
+    # today, which player totals don't include yet.
+    team_games = team_games[team_games.WL.notna()]
+    fetched_at = pd.Timestamp.now()
+    players = pd.DataFrame({"PLAYER_ID": players.PLAYER_ID, "GP": players.GP, "FETCHED_AT": fetched_at})
+    teams_so_far = (
+        team_games.groupby(["TEAM_ID", "TEAM_ABBREVIATION"]).size().rename("GAMES").reset_index()
+        .assign(LAST_GAME=team_games.GAME_DATE.max() if len(team_games) else None, FETCHED_AT=fetched_at)
+    )
+    for df, path in zip((players, teams_so_far), season_to_date_paths(season)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        df.to_parquet(tmp, index=False)
+        tmp.replace(path)
+    return players, teams_so_far
+
+
+def saved_season_to_date(season: str = config.FORECAST_SEASON) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """Saved games-so-far files, without calling the API. None if never fetched."""
+    paths = season_to_date_paths(season)
+    if not all(p.exists() for p in paths):
+        return None
+    return tuple(pd.read_parquet(p) for p in paths)
+
+
 def saved_rosters(season: str = config.FORECAST_SEASON) -> pd.DataFrame | None:
     """The saved rosters, without calling the API. None if never fetched."""
     path = roster_path(season)
@@ -188,12 +232,12 @@ def main():
     parser.add_argument("--seasons", nargs="+", default=config.SEASONS)
     parser.add_argument("--datasets", nargs="+", default=list(DATASETS), choices=list(DATASETS))
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--rosters", action="store_true", help="only refresh current rosters")
+    parser.add_argument("--current", "--rosters", action="store_true",
+                        help="only refresh current rosters and games played so far")
     args = parser.parse_args()
 
-    if args.rosters:
-        df = fetch_current_rosters()
-        print(f"Current rosters ({config.FORECAST_SEASON}): {len(df)} players on {df.TEAM_ID.nunique()} teams")
+    if args.current:
+        refresh_current()
         return
 
     for season in args.seasons:
@@ -201,8 +245,19 @@ def main():
         for dataset in args.datasets:
             if fetch(dataset, season, force=args.force):
                 time.sleep(config.REQUEST_DELAY)
-    df = fetch_current_rosters()
-    print(f"Current rosters ({config.FORECAST_SEASON}): {len(df)} players on {df.TEAM_ID.nunique()} teams")
+    refresh_current()
+
+
+def refresh_current(season: str = config.FORECAST_SEASON):
+    """Refresh current rosters and games played so far in the season being forecast."""
+    rosters = fetch_current_rosters(season)
+    print(f"Current rosters ({season}): {len(rosters)} players on {rosters.TEAM_ID.nunique()} teams")
+    time.sleep(config.REQUEST_DELAY)
+    players, teams_so_far = fetch_season_to_date(season)
+    if teams_so_far.empty:
+        print(f"{season} hasn't started yet")
+    else:
+        print(f"{season} so far: {len(players)} players have played, through {teams_so_far.LAST_GAME.iloc[0]}")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useSearchParams } from 'react-router'
 import Leaderboard from '../components/Leaderboard'
 import SearchBox from '../components/SearchBox'
+import { shortDate } from '../data'
 import type { Index } from '../types'
 
 export default function Home({ index }: { index: Index }) {
@@ -14,15 +15,21 @@ export default function Home({ index }: { index: Index }) {
   return (
     <>
       <section className="pt-10 pb-8 sm:pt-16">
-        <p className="text-sm font-semibold tracking-widest text-accent uppercase">{meta.forecastSeason} forecasts</p>
+        <p className="text-sm font-semibold tracking-widest text-accent uppercase">
+          {meta.forecastSeason} season forecasts
+          {meta.seasonStarted && <span className="ml-2 text-muted">· season underway</span>}
+        </p>
         <h1 className="mt-2 font-display text-5xl leading-[0.95] font-extrabold tracking-tight uppercase sm:text-7xl">
           How many games
           <br />
           will they play?
         </h1>
         <p className="mt-4 max-w-xl text-muted">
-          A machine-learning forecast of games played for every NBA player next season, with the reasons behind each
-          number.
+          A machine-learning forecast of games played for every NBA player this season, made before opening night, with
+          the reasons behind each number.
+          {meta.seasonStarted && meta.soFarThrough && (
+            <> Games so far are updated through {shortDate(meta.soFarThrough)}.</>
+          )}
         </p>
         <div className="mt-8 max-w-2xl">
           <SearchBox players={players} autoFocus />
@@ -53,7 +60,14 @@ export default function Home({ index }: { index: Index }) {
             </select>
           </label>
         </div>
-        <Leaderboard key={team?.abbr ?? 'all'} players={rows} dataThrough={meta.dataThrough} showTeam={!team} />
+        <Leaderboard
+          key={team?.abbr ?? 'all'}
+          players={rows}
+          dataThrough={meta.dataThrough}
+          forecastSeason={meta.forecastSeason}
+          seasonStarted={meta.seasonStarted}
+          showTeam={!team}
+        />
         {team && team.noForecast.length > 0 && (
           <p className="mt-3 text-sm text-faint">
             No forecast yet: {team.noForecast.join(', ')}. Forecasts need NBA games in {meta.previousSeason} or{' '}

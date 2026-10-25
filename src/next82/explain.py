@@ -13,35 +13,48 @@ from next82.features import FEATURES
 
 GAMES = 82
 
+# Labels name seasons explicitly ({cur} = the latest finished season, {prev} and
+# {prev2} the two before it), since "this season" is ambiguous once the forecast
+# season is underway.
 LABELS = {
     "age": "Age",
     "years_since_draft": "Years since draft",
     "undrafted": "Undrafted",
     "height_in": "Height",
     "weight_lb": "Weight",
-    "gp_share": "Games played this season",
-    "mpg": "Minutes per game",
-    "min_share": "Total minutes this season vs. league leader",
-    "usg_pct": "Usage rate",
-    "longest_gap": "Longest absence this season",
-    "n_major_gaps": "Absences of 10+ games this season",
-    "missed_start": "Games missed at start of season",
-    "missed_end": "Games missed at end of season",
-    "n_teams": "Teams played for this season",
-    "missed_season": "Missed all of this season",
-    "gp_share_lag1": "Games played last season",
-    "gp_share_lag2": "Games played two seasons ago",
-    "missed_season_lag1": "Missed all of last season",
-    "mpg_lag1": "Minutes per game last season",
-    "longest_gap_lag1": "Longest absence last season",
-    "missed_end_lag1": "Games missed at end of last season",
-    "major_gaps_3yr": "Absences of 10+ games, last 3 seasons",
-    "avg_gp_share_3yr": "Average games played, last 3 seasons",
+    "gp_share": "Games played in {cur}",
+    "mpg": "Minutes per game in {cur}",
+    "min_share": "Total minutes in {cur} vs. league leader",
+    "usg_pct": "Usage rate in {cur}",
+    "longest_gap": "Longest absence in {cur}",
+    "n_major_gaps": "Absences of 10+ games in {cur}",
+    "missed_start": "Games missed at start of {cur}",
+    "missed_end": "Games missed at end of {cur}",
+    "n_teams": "Teams played for in {cur}",
+    "missed_season": "Missed all of {cur}",
+    "gp_share_lag1": "Games played in {prev}",
+    "gp_share_lag2": "Games played in {prev2}",
+    "missed_season_lag1": "Missed all of {prev}",
+    "mpg_lag1": "Minutes per game in {prev}",
+    "longest_gap_lag1": "Longest absence in {prev}",
+    "missed_end_lag1": "Games missed at end of {prev}",
+    "major_gaps_3yr": "Absences of 10+ games, {prev2} to {cur}",
+    "avg_gp_share_3yr": "Average games played, {prev2} to {cur}",
     "seasons_in_data": f"Seasons in the NBA since {config.SEASONS[0]}",
     "last_played_gp_share": "Games played, last season played",
     "avg_gp_share_3_played": "Average games, last 3 seasons played",
     "age_x_missed_season": "Age, if returning from a missed season",
 }
+
+
+def _season_before(season: str, n: int = 1) -> str:
+    start = int(season[:4]) - n
+    return f"{start}-{str(start + 1)[-2:]}"
+
+
+def label(feature: str, season: str) -> str:
+    """Readable name for a feature, with seasons filled in relative to `season`."""
+    return LABELS[feature].format(cur=season, prev=_season_before(season), prev2=_season_before(season, 2))
 
 
 def format_value(feature: str, value) -> str:
@@ -80,7 +93,7 @@ def top_factors(row: pd.Series, n: int = 6) -> pd.DataFrame:
     impact = pd.Series({f: row[f"shap_{f}"] for f in FEATURES})
     top = impact.reindex(impact.abs().sort_values(ascending=False).index[:n])
     return pd.DataFrame({
-        "factor": [LABELS[f] for f in top.index],
+        "factor": [label(f, row.SEASON) for f in top.index],
         "value": [
             "did not play" if row.get("missed_season") and pd.isna(row[f]) else format_value(f, row[f])
             for f in top.index
